@@ -1,0 +1,11 @@
+setuptools_scm
+neo4j
+loguru
+sentence_transformers
+numpy
+torch
+openai
+paddlepaddle
+paddlenlp
+swifter
+jsonlines
