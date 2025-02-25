@@ -1,7 +1,7 @@
 neo4j_notification_filter = ["DEPRECATION"]
 exception_log_path = "exception_log.txt"
-embed_model = "bge-base-zh-v1.5"
-embed_model_dict = {"bge-base-zh-v1.5":"/path/to/bge"} 
+embed_model = "embed_model_name"
+embed_model_dict = {"embed_model_name":"/path/to/bge"} 
 
 embed_dim = 768
 
@@ -244,32 +244,65 @@ Follow-up Dictionary:{choices}
 
 """
 
-llm_choice_query_chunk = """
+
+llm_choice_query_chunk="""  
+You are a question answering robot and I will give you a question with multiple information points and a sentence of background information. Depending on the question you need to answer, you need to determine whether this background information is Completely Irrelevant to answering the question, Indirectly Relevant, or Relevant and Necessary. You can only return one of these three results.
+Please note that the question I give you must involve multiple sentences of background information, that is, the answer to the question must require the coordination and reasoning between multiple sentences to get the answer. But you don't know exactly what information sentence is needed to answer the question, you just need to decide whether the sentence given to you is relevant and necessary to answer the multi-information question, relevant but unnecessary, or completely irrelevant.
+Result 1: [Completely Irrelevant]. You find that you can answer the question without knowing the background information, or that the background information you are given has nothing to do with the answer to the question.
+Result 2: [Indirectly Relevant]. At this point, you find that the background information given to you has a certain relationship with the answer to the question, but you can't rigorously dig out the information from the background information that will really help answer the question, for example, maybe the sentence focuses on other aspects of a similar topic. The background information given to you is not necessary to answer the question.
+Result 3: [Relevant and Necessary]. At this point, you find that although you cannot answer the question without this information point, which means that the background information given to you is indeed relevant to the question and necessary to answer the question, and you cannot answer the question without this information.
+Example of result 1:
+Question: Donnie Smith who plays as a left back for New England Revolution belongs to what league featuring 22 teams?
+Background information: He was awarded the Graham Perkin Australian Journalist of the Year Award for his coverage of the Lindt Cafe siege in  December 2014.
+In this case, after careful consideration, you find that the background information given to you does not help you answer the question, that is, you can answer the question even if you do not know the background information. This background information has nothing to do with the problem. Your response should be:
+json{{"Decision":"Completely Irrelevant"}
+
+Example of result 2:
+Question: Donnie Smith who plays as a left back for New England Revolution belongs to what league featuring 22 teams?
+Background information: In Major League Soccer,  several teams annually compete for secondary rivalry cups that are usually contested by only two teams,  with the only exception being the Cascadia Cup, which is contested by three teams.
+In this case, you first find that the background information involves similar information to the question, but the background information focuses on the league format and the question focuses on the league a player belongs to. After careful consideration, you find that the background information given to you has something to do with the answer to the question, but you can't rigorously dig out the background information that will actually help you answer the question. Your response should be:
+json{{"Decision":"Indirectly Relevant"}
+
+Example of result three:
+Question: Donnie Smith who plays as a left back for New England Revolution belongs to what league featuring 22 teams?
+Background information: Donald W. "Donnie" Smith (born December 7, 1990 in Detroit,  Michigan) is an American soccer player who plays as a left back for New England Revolution in Major League Soccer.
+In this case, after careful consideration, you find that the background information given to you is indeed relevant to the question and necessary to answer the question, and that you would not be able to answer the question without this background information. Your response should be:
+json{{"Decision":"Relevant and Necessary"}
+
+Start by replying strictly in json format, avoiding unnecessary escapes, line breaks, and white space. You need to note that except for json and the list format itself requires English double quotes ", the rest of the cases to use double quotes are changed to English single quotes. For example '(How to Live) As Ghosts' in the text
+Questions and background information are as follows:
+Question: {query}
+Context: {node_content}
+"""
+
+llm_choice_query_edge = """
 You are a question-answering robot. I will provide you with a main question that involves multiple pieces of information, as well as an additional auxiliary question. Your task is to answer the main question, but since the main question involves a lot of information that you may not know, you have the opportunity to use the auxiliary question to gather the information you need. However, the auxiliary question may not always be useful, so you need to assess the relationship between the auxiliary and the main question to determine whether or not to use it.
 
-You need to assess whether the auxiliary question is completely irrelevant, indirectly relevant, or relevant and necessary for answering the main question. You can only return one of these three outcomes.
+You need to assess whether the auxiliary question is Completely Irrelevant, Indirectly Relevant, or Relevant and Necessary for answering the main question. You can only return one of these three outcomes.
 
 Please note that the main question will involve multiple background sentences, meaning that answering the main question requires the combination and reasoning of several pieces of information. However, you do not know which specific sentences are necessary to answer the main question. Your task is to assess whether the given auxiliary question is relevant and necessary, Indirectly relevant, or completely irrelevant in answering the main question.
 
 Result 1: [Completely Irrelevant]. In this case, you determine that even without the information from the auxiliary question, you can still answer the main question, or the information in the auxiliary question is completely unrelated to the answer of the main question.
-Result 2: [Indirectly relevant]. In this case, you find that the auxiliary question is related to the main question, but its answer is not part of the multiple pieces of information needed to answer the main question. The auxiliary question focuses on a related topic but does not provide critical information necessary for answering the main question.
+Result 2: [Indirectly Relevant]. In this case, you find that the auxiliary question is related to the main question, but its answer is not part of the multiple pieces of information needed to answer the main question. The auxiliary question focuses on a related topic but does not provide critical information necessary for answering the main question.
 Result 3: [Relevant and Necessary]. In this case, you find that the auxiliary question is a sub-question of the main question, meaning that without answering the auxiliary question, you will not be able to answer the main question. The information provided by the auxiliary question is necessary to answer the main question.
 
 Example of Result 1:
 Main Question: Donnie Smith who plays as a left back for New England Revolution belongs to what league featuring 22 teams?
 Auxiliary Question: What is the purpose of the State of the Union address presented by the President of the United States?
 In this case, after careful consideration, you find that the auxiliary question does not help answer the main question. The auxiliary question is completely unrelated to the main question. Your response should be:
-```json{{" Decision ":"Completely Irrelevant"}}```
+```json{{"Decision":"Completely Irrelevant"}}```
 
 Example of Result 2:
 Main Question: Donnie Smith who plays as a left back for New England Revolution belongs to what league featuring 22 teams?
 Auxiliary Question: What is the significance of this league for second teams in the region?
-In this case, you notice that both the main and auxiliary questions involve similar topics, but the auxiliary question focuses on the significance of the league, while the main question asks about the league to which a specific player belongs. Upon careful consideration, you find that the auxiliary question is related, but its answer does not provide any critical information to answer the main question. Your response should be: ```json{{" Decision ":" Indirectly relevant "}}```
+In this case, you notice that both the main and auxiliary questions involve similar topics, but the auxiliary question focuses on the significance of the league, while the main question asks about the league to which a specific player belongs. Upon careful consideration, you find that the auxiliary question is related, but its answer does not provide any critical information to answer the main question. Your response should be: 
+```json{{"Decision":"Indirectly Relevant"}}```
 
 Example of Result 3:
 Main Question: Donnie Smith who plays as a left back for New England Revolution belongs to what league featuring 22 teams?
 Auxiliary Question: Which team does Donald W. 'Donnie' Smith play for in Major League Soccer?
-In this case, after careful consideration, you find that the auxiliary question is indeed related to the main question. The auxiliary question is a sub-question of the main question and provides necessary information to answer the main question. Without the answer to the auxiliary question, you will not be able to answer the main question. Your response should be: ```json{{" Decision ":" Relevant and Necessary "}}```
+In this case, after careful consideration, you find that the auxiliary question is indeed related to the main question. The auxiliary question is a sub-question of the main question and provides necessary information to answer the main question. Without the answer to the auxiliary question, you will not be able to answer the main question. Your response should be: 
+```json{{"Decision":"Relevant and Necessary"}}```
 
 Now please strictly follow the JSON format in your response, avoiding unnecessary escapes, line breaks, or spaces. Additionally, please note that, except for the JSON and list formats, you should replace all double quotes with single quotes. For example, use '(How to Live) As Ghosts'
 Main Question, Auxiliary Question as follows:
