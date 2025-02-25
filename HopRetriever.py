@@ -339,7 +339,7 @@ class HopRetriever:
                         if label=="Completely Irrelevant":
                             queue_irrelevant.append(new_text)
                         else:
-                            queue.append(new_text) # Neighbors of completely unrelated nodes won't be directly added to the queue, they have lower priority, unless the queue is empty and needs to be filled
+                            queue.append(new_text) # Neighbors of completely Irrelevant nodes won't be directly added to the queue, they have lower priority, unless the queue is empty and needs to be filled
 
                 helpful=[]
                 relevant=[]
@@ -347,7 +347,7 @@ class HopRetriever:
                 for node,label in judged_outcome.items():
                     if label=='Relevant and Necessary':
                         helpful.append(node)
-                    elif label=='Indirectly relevant':
+                    elif label=='Indirectly Relevant':
                         relevant.append(node)
                     else:
                         irrelevant.append(node)
@@ -376,7 +376,7 @@ class HopRetriever:
         if sim>0.7:
             label = 'Relevant and Necessary'
         elif sim>0.6:
-            label = 'Indirectly relevant'
+            label = 'Indirectly Relevant'
         else:
             label= "Completely Irrelevant"
         judged_outcome[node_content]=label
