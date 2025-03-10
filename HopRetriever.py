@@ -11,8 +11,8 @@ from loguru import logger
 from typing import List, Tuple, Dict, Set
 
 class HopRetriever:
-    def __init__(self,llm='gpt-4o-mini',max_hop:int=5,entry_type="edge",if_hybrid=False,if_trim=False,cache_context_path="./context_outcome.json",tol=2,mock_dense=False,label="musique1000_",mock_sparse=False,topk=10,traversal="bfs"):
-        self.emb_model = load_embed_model("bge-base-zh-v1.5")
+    def __init__(self,llm='gpt-4o-mini',max_hop:int=5,entry_type="edge",if_hybrid=False,if_trim=False,cache_context_path="./context_outcome.json",tol=2,mock_dense=False,label="hotpot_example_",mock_sparse=False,topk=10,traversal="bfs"):
+        self.emb_model = load_embed_model("embed_model")
         self.driver = GraphDatabase.driver(neo4j_url, auth=(neo4j_user, neo4j_password), database=neo4j_dbname, notifications_disabled_categories=neo4j_notification_filter)
         self.max_hop = max_hop
         self.entry_type = entry_type
@@ -352,8 +352,6 @@ class HopRetriever:
                     else:
                         irrelevant.append(node)
                 outcome=helpful+relevant+irrelevant
-                with open(f'/path/to/musique/musique/output/ablation3/hop_{count}_query_{query}.json','w') as f:
-                    json.dump(outcome,f)
                 if len(helpful)>=5:
                     break
                 if count<self.max_hop and len(queue)<5: # If there aren’t enough hops or the queue is empty, refill the queue
@@ -391,6 +389,7 @@ class HopRetriever:
             raise ValueError("traversal type must be 'dfs' or 'bfs' or 'bfs_sim_node' ")
         
 if __name__ == "__main__":
-    query="Donnie Smith who plays as a left back for New England Revolution belongs to what league featuring 22 teams?"
-    retriever = HopRetriever(max_hop = 4, entry_type="node",if_trim=False,if_hybrid=False,tol=30,label='hotpot_1000_',topk=20,traversal='bfs',mock_dense=True)
+    query="Who is older, Annie Morton or Terry Richardson?"
+    retriever = HopRetriever(max_hop = 4, entry_type="node",if_trim=False,if_hybrid=False,tol=30,label='hotpot_example_',topk=20,traversal='bfs',mock_dense=False)
     context = retriever.search_docs(query)
+    print(context)

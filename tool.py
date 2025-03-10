@@ -133,14 +133,14 @@ def get_ner_eng(text):
     return filtered
 
 def load_embed_model(model_name):
-    if model_name in ["bge-base-zh-v1.5"]:
-        return SentenceTransformer(embed_model_dict[model_name],device='cuda:1')  #
+    if model_name in embed_model_dict:
+        return SentenceTransformer(embed_model_dict[model_name],device='cuda:0')  #
     else:
         raise NotImplementedError
 
 def get_doc_embeds(documents, model):
     with torch.no_grad():
-        embeddings = model.encode(documents, normalize_embeddings=True, device='cuda:1').tolist() # 
+        embeddings = model.encode(documents, normalize_embeddings=True, device='cuda:0').tolist() # 
     return embeddings
 
 def _get_chat_completion(chat, return_json=True, model=default_gpt_model, max_tokens=2048, keys=None):

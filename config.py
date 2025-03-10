@@ -2,7 +2,6 @@ neo4j_notification_filter = ["DEPRECATION"]
 exception_log_path = "exception_log.txt"
 embed_model = "embed_model_name"
 embed_model_dict = {"embed_model_name":"/path/to/bge"} 
-
 embed_dim = 768
 
 signal= "\n"     # the seperation for each doc in hotpot, customized to fit the data form
@@ -106,7 +105,7 @@ CREATE (node:{type} {{text: $text, keywords: $keywords, embed: $embed}}) RETURN 
 create_pending2answerable='''
 MATCH (a), (b)
 WHERE id(a) = $id1 AND id(b) = $id2
-CREATE (a)-[r:pen2ans_musique1000 {
+CREATE (a)-[r:pen2ans_hotpot_example {
     keywords: $keywords,
     embed: $embed,
     question: $answerable_question
@@ -116,7 +115,7 @@ CREATE (a)-[r:pen2ans_musique1000 {
 create_abstract2answerable='''
 MATCH (a), (b)
 WHERE id(a) = $abstract_id AND id(b) = $id2
-CREATE (a)-[r:pen2ans_musique1000 {
+CREATE (a)-[r:pen2ans_hotpot_example {
     keywords: $keywords,
     embed: $embed,
     question: $answerable_question

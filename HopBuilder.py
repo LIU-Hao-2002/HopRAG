@@ -18,13 +18,13 @@ from typing import List, Tuple, Dict, Any,Set
 import time
 logger = loguru.logger
 class QABuilder:
-    def __init__(self,done:Set[str]={},label="musique_1000"): # see config
+    def __init__(self,done:Set[str]={},label="hotpot_example"):
         self.emb_model = load_embed_model("bge-base-zh-v1.5")
         self.driver = GraphDatabase.driver(neo4j_url, auth=(neo4j_user, neo4j_password), database=neo4j_dbname, notifications_disabled_categories=neo4j_notification_filter)
         self.edges=None # pending2answerable
         self.abstract2chunk=None # pseudo abstract to chunk
         self.done=done
-        self.label=label
+        self.label=label # label is the type of node in neo4j
 
     def get_single_doc_qa(self, doc:str)->Tuple[Dict[str,List[Tuple[str,np.ndarray]]],np.ndarray]: 
         def process_sentence(sentence_list:List[str],keywords:Set)->Tuple[Dict[str,List[Tuple[str,Set,np.ndarray]]],np.ndarray]:
@@ -71,12 +71,12 @@ class QABuilder:
         return outcome 
     
 
-    def create_nodes(self,docs_dir:str='/path/to/docs')->Tuple[Dict[str,List[int]],Dict[Tuple[int,str],Dict[str,List[Tuple[str,Set,np.ndarray]]]],Dict[str,int]]:
+    def create_nodes(self,docs_dir:str='/path/to/docs')->Tuple[Dict[str,List[int]],Dict[Tuple[int,str],Dict[str,List[Tuple[str,Set,np.ndarray]]]]]:
         docs_pool=os.listdir(docs_dir) 
         docid2nodes={}
         node2questiondict={}
         with self.driver.session() as session:
-            for doc_id in tqdm(docs_pool[:8415],desc='create_nodes'): 
+            for doc_id in tqdm(docs_pool,desc='create_nodes'): 
                 if doc_id in self.done:
                     continue
                 try:
@@ -176,10 +176,10 @@ class QABuilder:
         self.driver.close()
 
 
-    def create_edges(self,node2questiondict,docid2nodes,problems_path="/path/to/musique/data/musique.jsonl"):
+    def create_edges_musique(self,node2questiondict,docid2nodes,problems_path="/path/to/musique/musique_problems.jsonl"):
         with open(problems_path,'r') as f:
             problems=[json.loads(line) for line in f]
-        id2txt=json.load(open('/path/to/musique/data/id2txt.json','r'))
+        id2txt=json.load(open('quickstart_dataset/musique_example_id2txt.json','r'))
         for problem in tqdm(problems,'create_edges_musique'): # 
             id=problem['id']
             if id in self.done:
@@ -196,35 +196,53 @@ class QABuilder:
                 logger.info(f'{id} error {e}')
                 continue
 
+    def create_edges_hotpot(self,node2questiondict,docid2nodes,problems_path="/path/to/hotpotqa/hotpotqa_problems.jsonl"):
+        with open(problems_path,'r') as f:
+            problems=[json.loads(line) for line in f]
+        for problem in tqdm(problems,'create_edges'): 
+            id=problem['_id']
+            if id in self.done:
+                continue
+            context=problem['context']
+            docs=[x[0].replace('/','_')+'.txt' for x in context]
+            docid2nodes_={x:docid2nodes[x] for x in docs if x in docid2nodes} 
+            nodes=[(y,x) for x in docid2nodes_.keys() for y in docid2nodes_[x]]
+            node2questiondict_={(y,x):node2questiondict[(y,x)] for (y,x) in nodes} 
+            try:
+                self.create_edge(node2questiondict_,docid2nodes_)
+                self.done.add(id)
+            except Exception as e:
+                logger.info(f'{id} error {e}')
+                continue # for hotpot； 
+
     def create_index(self):
         with self.driver.session() as session:
-            for type,index in zip(
-                [self.label],
-                [f'musique1000_node_dense_index']):
-                index_cypher = create_node_dense_index_template.format(name=index, property="embed", dim=embed_dim,type=type)
-                session.run(index_cypher)
-            index=f"musique1000_edge_dense_index"
-            for type in [f'pen2ans_musique1000']: #
-                index_cypher = create_edge_dense_index_template.format(name=index,  property="embed", dim=embed_dim,type=type)
-                session.run(index_cypher)
-            index=f"musique1000_node_sparse_index"
-            for type in [self.label]: 
-                index_cypher = create_node_sparse_index_template.format(name=index, property="keywords",type=type) # Both edges and nodes have attributes as lists during creation
-                session.run(index_cypher)
-            index=f"musique1000_edge_sparse_index"
-            for type in [f'pen2ans_musique1000']: # see config
-                index_cypher = create_edge_sparse_index_template.format(name=index, property="keywords",type=type) # Both edges and nodes have attributes as lists during creation
-                session.run(index_cypher)            
+            index,type=f'hotpot_example_node_dense_index',self.label
+            index_cypher = create_node_dense_index_template.format(name=index, property="embed", dim=embed_dim,type=type)
+            session.run(index_cypher)
+            index,type=f"hotpot_example_edge_dense_index",f'pen2ans_hotpot_example'
+            index_cypher = create_edge_dense_index_template.format(name=index,  property="embed", dim=embed_dim,type=type)
+            session.run(index_cypher)
+            index,type=f"hotpot_example_node_sparse_index",self.label
+            index_cypher = create_node_sparse_index_template.format(name=index, property="keywords",type=type) # Both edges and nodes have attributes as lists during creation
+            session.run(index_cypher)
+            index,type=f"hotpot_example_edge_sparse_index",f'pen2ans_hotpot_example'
+            index_cypher = create_edge_sparse_index_template.format(name=index, property="keywords",type=type) # Both edges and nodes have attributes as lists during creation
+            session.run(index_cypher)            
         self.driver.close()
 
-def main_nodes():
+def main_nodes(cache_dir='quickstart_dataset/cache_hotpot'):
+    if not os.path.exists(cache_dir):
+        os.makedirs(cache_dir)
     start_time=time.time()
     print('start',time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())))
-    cache_dir='/path/to/musique/musique/cache'
-    with open(f'{cache_dir}/docid2nodes.json','r') as f: 
-        docid2nodes_old = json.load(f)
+    if os.path.exists(f'{cache_dir}/docid2nodes.json'):
+        with open(f'{cache_dir}/docid2nodes.json','r') as f: 
+            docid2nodes_old = json.load(f)
+    else:
+        docid2nodes_old={}
     done=set(docid2nodes_old.keys())
-    docs_dir='/path/to/musique/data/musique_ans_v1.0_dev_1000'
+    docs_dir='quickstart_dataset/hotpot_example_docs'
     builder = QABuilder(done=done)
     docid2nodes,node2questiondict=builder.create_nodes(docs_dir)
     print(docid2nodes)#  
@@ -244,11 +262,16 @@ def main_nodes():
     end_time=time.time()
     print('time:',end_time-start_time)
 
-def main_edges(cache_dir='/path/to/musique/cache'):
+def main_edges_index(cache_dir='quickstart_dataset/cache_hotpot'):
+    if not os.path.exists(cache_dir):
+        os.makedirs(cache_dir)
     start_time=time.time()
     print('start',time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())))
-    with open(f'{cache_dir}/docid2nodes.json','r') as f: 
-        docid2nodes_old = json.load(f)
+    if os.path.exists(f'{cache_dir}/docid2nodes.json'):
+        with open(f'{cache_dir}/docid2nodes.json','r') as f: 
+            docid2nodes_old = json.load(f)
+    else:
+        docid2nodes_old={}
     docid2nodes=docid2nodes_old
     if os.path.exists(f'{cache_dir}/edges_done.pkl'):
         with open(f'{cache_dir}/edges_done.pkl','rb') as f:
@@ -262,13 +285,15 @@ def main_edges(cache_dir='/path/to/musique/cache'):
     else:
         node2questiondict_old={}
     node2questiondict=node2questiondict_old
-    builder.create_edges_musique(node2questiondict,docid2nodes)  
+    builder.create_edges_hotpot(node2questiondict,docid2nodes,problems_path="quickstart_dataset/hotpot_example.jsonl")  
 
     with open(f'{cache_dir}/edges_done.pkl','wb') as f:
         pickle.dump(builder.done,f)
     end_time=time.time()
     print('time:',end_time-start_time)
 
+    builder.create_index()
+
 if __name__ == "__main__":
     main_nodes()
-    main_edges()
+    main_edges_index()
