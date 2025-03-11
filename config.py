@@ -1,24 +1,24 @@
 neo4j_notification_filter = ["DEPRECATION"]
 exception_log_path = "exception_log.txt"
-embed_model = "embed_model_name"
-embed_model_dict = {"embed_model_name":"/path/to/bge"} 
+embed_model = "your_embed_model"
+embed_model_dict = {"your_embed_model":"/path/to/your/embed/model"} 
 embed_dim = 768
 
-signal= "\n"     # the seperation for each doc in hotpot, customized to fit the data form
+signal= "\n\n"     # the seperation for each doc in hotpot, customized to fit the data form
 max_try_num = 2 # the attempt times for certain function calling
 max_thread_num = 1  # Use 1 thread for API access; frequent requests or multiprocessing may cause errors.
 
 LOG = True
 DEBUG = False
 
-# gpt-4o-mini
-personal_base =  'https://api.openai.com/v1'
-personal_key = "sk-...."  
-default_gpt_model = "your model" 
+
+personal_base =  'your_personal_base'
+personal_key = "your_personal_key"  
+default_gpt_model = "default_gpt_model" 
 
 neo4j_url = "bolt://localhost:7687"
 neo4j_user = "neo4j"
-neo4j_password = "your password"
+neo4j_password = "your_password"
 neo4j_dbname = "neo4j"
 
 create_relation_query = """\

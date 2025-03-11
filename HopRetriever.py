@@ -12,7 +12,7 @@ from typing import List, Tuple, Dict, Set
 
 class HopRetriever:
     def __init__(self,llm='gpt-4o-mini',max_hop:int=5,entry_type="edge",if_hybrid=False,if_trim=False,cache_context_path="./context_outcome.json",tol=2,mock_dense=False,label="hotpot_example_",mock_sparse=False,topk=10,traversal="bfs"):
-        self.emb_model = load_embed_model("embed_model")
+        self.emb_model = load_embed_model(embed_model)
         self.driver = GraphDatabase.driver(neo4j_url, auth=(neo4j_user, neo4j_password), database=neo4j_dbname, notifications_disabled_categories=neo4j_notification_filter)
         self.max_hop = max_hop
         self.entry_type = entry_type
@@ -318,7 +318,7 @@ class HopRetriever:
             while count<self.max_hop:
                 queue=queue[:20]#
                 count+=1
-                print(f"current count:{count}")
+                print(f"current count:{count},len(queue):{len(queue)}")
                 queue_irrelevant=[]
                 for i in range(len(queue)):
                     if self.traversal=='bfs':
@@ -389,7 +389,7 @@ class HopRetriever:
             raise ValueError("traversal type must be 'dfs' or 'bfs' or 'bfs_sim_node' ")
         
 if __name__ == "__main__":
-    query="Who is older, Annie Morton or Terry Richardson?"
+    query="Were Scott Derrickson and Ed Wood of the same nationality?"
     retriever = HopRetriever(max_hop = 4, entry_type="node",if_trim=False,if_hybrid=False,tol=30,label='hotpot_example_',topk=20,traversal='bfs',mock_dense=False)
     context = retriever.search_docs(query)
     print(context)

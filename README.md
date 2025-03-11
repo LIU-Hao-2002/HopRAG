@@ -9,20 +9,20 @@ Note:All paths in the project files need to be replaced with your local paths. W
 
 ## 1. Prepare the Dataset
 Preprocess `.json` format test set file using the `process_data` function in the `data_preprocess.py` file. The preprocessing will write the passages for all the questions from the test set as `.txt` files into the specified directory and transform the `.json` test file into `.jsonl` format. You might need to revise it according to the format of the specific dataset. 
-- for hotpotqa or 2wiki dataset, you can proprocess it using `main_hotpot_2wiki` function.
+- for hotpotqa or 2wiki dataset, you can proprocess it using `main_hotpot_2wiki` function. Please note that here the function will use `\n\n` to join sentences, which may affect your chunking delimeter `signal` in `config.py`. Please make sure they are consistent and customized to your chunking need. 
 - for musique dataset, since it is already in `.jsonl` format, we can use `main_musique` function to write the doc pool.Since different questions from musique dataset may include the same doc for context, we also produce a id2txt `.json` file to create the mapping from each id to its unique doc text. 
 We prepare two example datasets from hotpotqa and musique for quickstart, which are `quickstart_dataset/hotpot_example.json` and `quickstart_dataset/musique_example.json` respectively.
 
 
 ## 2. Build Nodes  
 Run the `main_nodes` function in the `HopBuilder.py` file to build nodes in the graph. Please note that the following variable needs to be reset before you begin:
-- Each node contains a chunk from a document. You can change the chunking seperation by setting the `signal` in `config.py`.  
+- Each node contains a chunk from a document text file in the doc pool directory (for example `quickstart_dataset/hotpot_example_docs` ). You can change the chunking delimeter by setting the `signal` in `config.py` according to the txt file in the doc pool.  
 - In neo4j, each node,edge and index has a type(namely its name). You can change these three names by chaning the following variables:
     - for node type: `label` in `HopBuilder.py` ; 
     - for edge type: the substring in `create_pending2answerable` and `create_abstract2answerable` in `config.py`(here they are `pen2ans_hotpot_example` but you can change it according to your need)
     - for index type: the four `index` variables in `create_index` function in `HopBuilder.py`, respectively for node_dense_index, edge_dense_index, node_sparse_index, edge_sparse_index. The index name will be used during retrival so please make sure they are consistent with the index names in `HopRetriever.py`. Please also note that here the two `type` variables in `create_index` function (for demonstration they are `pen2ans_hotpot_example`) should also be consistent with the substring edge type in `create_pending2answerable` and `create_abstract2answerable` in `config.py`
 - In `main_nodes` function, the following variables are introduced:
-    - `cache_dir`: to save the nodes that are finished. Since building nodes from a large pool of documents may be a time-consuming job for large dataset and may encounter interruption, `HopBuilder.py` is designed to skip the document that has been processed by checking the `cache_dir` and continue from where it is interrupted. Here it is `uickstart_dataset/cache_hotpot` for demonstration.
+    - `cache_dir`: to save the nodes that are finished. Since building nodes from a large pool of documents may be a time-consuming job for large dataset and may encounter interruption, `HopBuilder.py` is designed to skip the document that has been processed by checking the `cache_dir` and continue from where it is interrupted. Here it is `quickstart_dataset/cache_hotpot` for demonstration.
     - `docs_dir`: the doc pool directory from step1. Here it is set as `quickstart_dataset/hotpot_example_docs` for demonstration.
 
 

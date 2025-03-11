@@ -19,7 +19,7 @@ import time
 logger = loguru.logger
 class QABuilder:
     def __init__(self,done:Set[str]={},label="hotpot_example"):
-        self.emb_model = load_embed_model("bge-base-zh-v1.5")
+        self.emb_model = load_embed_model(embed_model)  
         self.driver = GraphDatabase.driver(neo4j_url, auth=(neo4j_user, neo4j_password), database=neo4j_dbname, notifications_disabled_categories=neo4j_notification_filter)
         self.edges=None # pending2answerable
         self.abstract2chunk=None # pseudo abstract to chunk
@@ -136,7 +136,7 @@ class QABuilder:
         cartesian1=cartesian.loc[idx] 
         cartesian2=cartesian.loc[cartesian['doc_id_x']!=cartesian['doc_id_y']] # To avoid building edges all within the same document, a fallback edge creation step ensures different documents. However, the final similarity trimming is done together with edges from the same document (the downside is that this part tends to retain fewer edges)
         del cartesian,idx
-        cartesian1['keywords_both']=cartesian1.swifter.apply(lambda x:x['keywords_x'].union(x['keywords_y']),axis=1)
+        cartesian1['keywords_both']=cartesian1.apply(lambda x:x['keywords_x'].union(x['keywords_y']),axis=1) # try cartesian1.swifter.apply for faster speed with package swifter
         self.edges=cartesian1[['node_id_x','question_y','keywords_both','embedding_x','node_id_y','similarity']] # Edges should retain those pointing to the question
         self.abstract2chunk=answerable_df.loc[~answerable_df['question'].isin(cartesian1['question_y']) & ~answerable_df['question'].isin(cartesian2['question_y'])] # No answerable questions that match any follow-up questions
         del answerable_df,cartesian1
@@ -145,7 +145,7 @@ class QABuilder:
         idx = cartesian2.groupby('question_x').head(2).index # Encourage multiple hops between documents, so the value here is 2
         cartesian2=cartesian2.loc[idx]
         del idx
-        cartesian2['keywords_both']=cartesian2.swifter.apply(lambda x:x['keywords_x'].union(x['keywords_y']),axis=1)
+        cartesian2['keywords_both']=cartesian2.apply(lambda x:x['keywords_x'].union(x['keywords_y']),axis=1) # try cartesian2.swifter.apply for faster speed with package swifter
 
         max_edges_num=1000000000
         cartesian2=cartesian2.sort_values(by='similarity',ascending=False).drop_duplicates(subset=['node_id_x','node_id_y'],keep='first')
