@@ -26,8 +26,8 @@ class QABuilder:
         self.done=done
         self.label=label # label is the type of node in neo4j
 
-    def get_single_doc_qa(self, doc:str)->Tuple[Dict[str,List[Tuple[str,np.ndarray]]],np.ndarray]: 
-        def process_sentence(sentence_list:List[str],keywords:Set)->Tuple[Dict[str,List[Tuple[str,Set,np.ndarray]]],np.ndarray]:
+    def get_single_doc_qa(self, doc:str)->Dict[str,Tuple[str,Set,np.ndarray,Dict[str,List[Tuple[str,Set,np.ndarray]]],str]]: 
+        def process_sentence(sentence_list:List[str],keywords:Set)->Tuple[Dict[str,List[Tuple[str,Set,np.ndarray]]],np.ndarray,str]:
             if len(sentence_list)==0:
                 return None
             elif len(sentence_list)==1:

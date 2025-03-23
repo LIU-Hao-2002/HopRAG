@@ -6,6 +6,7 @@ Note:All paths in the project files need to be replaced with your local paths. W
 - Make sure you download neo4j database locally and can log into your account freely. Change the `neo4j_url`,`neo4j_user`,`neo4j_password`,`neo4j_dbname` in `config.py` so that you can log into it through python.
 - Change the `personal_base`,`personal_key`,`default_gpt_model` in `config.py` so that you can call LLM through api in python.
 - Make sure you download the embedding model locally and change the `embed_model`,`embed_model_dict`,`embed_dim` in `config.py`.
+- Please note that the recommended version of Neo4j is community 5.26.0; the recommended python version is 3.10.10
 
 ## 1. Prepare the Dataset
 Preprocess `.json` format test set file using the `process_data` function in the `data_preprocess.py` file. The preprocessing will write the passages for all the questions from the test set as `.txt` files into the specified directory and transform the `.json` test file into `.jsonl` format. You might need to revise it according to the format of the specific dataset. 

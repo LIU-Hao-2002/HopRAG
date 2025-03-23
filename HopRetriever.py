@@ -34,7 +34,7 @@ class HopRetriever:
         query_keywords=' '.join(sorted(list(query_keywords))) # str
         return query_embedding, query_keywords
     
-    def hybrid_retrieve_edge(self,keywords:str,embedding:List,context:Dict)->List[Tuple[Dict,float]]:
+    def hybrid_retrieve_edge(self,keywords:str,embedding:List,context:Dict):
         startNode_sparse=[]
         startNode_dense=[]
         with self.driver.session() as session:
@@ -59,7 +59,7 @@ class HopRetriever:
         return startNode_hybrid # List[Tuple[Dict,float]]
         
     
-    def hybrid_retrieve_node(self,keywords:str,embedding:List,context:Dict)->List[Tuple[Dict,float]]:
+    def hybrid_retrieve_node(self,keywords:str,embedding:List,context:Dict):
         startNode_sparse=[]
         startNode_dense=[]
         with self.driver.session() as session:
@@ -83,7 +83,7 @@ class HopRetriever:
         startNode_hybrid=sorted(startNode_hybrid,key=lambda x:x[1],reverse=True)
         return startNode_hybrid # List[Tuple[Dict,float]]
     
-    def dense_retrieve_node(self ,embedding:List,context:Dict)->List[Tuple[Dict,float]]:
+    def dense_retrieve_node(self ,embedding:List,context:Dict):
         startNode_dense=[]
         with self.driver.session() as session:
             result=session.run(retrieve_node_dense_query.format(embedding=embedding,index=repr(f'{self.label}node_dense_index')))
@@ -99,7 +99,7 @@ class HopRetriever:
             return None
         return startNode_dense # List[Tuple[Dict,float]]
     
-    def dense_retrieve_edge(self,embedding:List,context:Dict)->List[Tuple[Dict,float]]:
+    def dense_retrieve_edge(self,embedding:List,context:Dict):
         startNode_dense=[]
         with self.driver.session() as session:
             result=session.run(retrieve_edge_dense_query.format(embedding=embedding,index=repr(f'{self.label}edge_dense_index')))
@@ -111,7 +111,7 @@ class HopRetriever:
         startNode_dense=[(node,score) for node,edge,score in startNode_dense if node['text'] not in context] # Exclude nodes already present in the context
         return startNode_dense # List[Tuple[Dict,float]]
 
-    def sparse_retreive_node(self,keywords:str,context:Dict)->List[Tuple[Dict,float]]:
+    def sparse_retreive_node(self,keywords:str,context:Dict):
         startNode_sparse=[]
         with self.driver.session() as session:
             result=session.run(retrieve_node_sparse_query.format(keywords=repr(keywords),index=repr(f'{self.label}node_sparse_index')))
@@ -126,7 +126,7 @@ class HopRetriever:
             return None
         return startNode_sparse # List[Tuple[Dict,float]]
     
-    def find_entry_node(self,query_embedding, query_keywords,context:Dict)->Tuple[Dict,Dict[str,float]]:
+    def find_entry_node(self,query_embedding, query_keywords,context:Dict):
         # During the entry node search phase, precompute the edges and node rankings for the current query to facilitate context trimming
 
         retrieve_node=False if self.entry_type=='edge' else True
@@ -218,7 +218,7 @@ class HopRetriever:
         max_place=np.argmax(sim)
         return "Choose a follow-up question",out_nodes[max_place]
     
-    def find_next_node(self,current_node:Dict,context:Dict,query:str,node2score:Dict[str,float],query_embedding)->Tuple[Dict,float]:
+    def find_next_node(self,current_node:Dict,context:Dict,query:str,node2score:Dict[str,float],query_embedding):
         # First, exclude the recalled results that are already in the context to avoid duplicates
         llm_choice=self.get_llm_choice(current_node,context,query)
         next_node_sim = None
@@ -237,7 +237,7 @@ class HopRetriever:
             next_node = None
         return next_node , next_node_sim
     
-    def random_walk(self,current_node:Dict,query,context:Set,node2score:Dict,query_embedding)->Set[str]:
+    def random_walk(self,current_node:Dict,query,context:Set,node2score:Dict,query_embedding):
         '''DFS Random Walk'''
         while len(context)<self.max_hop+1: # In DFS, topk = self.max_hop + 1
             next_node , node_sim = self.find_next_node(current_node,context,query,node2score,query_embedding)
