@@ -11,8 +11,8 @@ from loguru import logger
 from typing import List, Tuple, Dict, Set
 
 class HopRetriever:
-    def __init__(self,llm='gpt-4o-mini',max_hop:int=5,entry_type="edge",if_hybrid=False,if_trim=False,cache_context_path="./context_outcome.json",tol=2,mock_dense=False,label="hotpot_example_",mock_sparse=False,topk=10,traversal="bfs"):
-        self.emb_model = load_embed_model(embed_model)
+    def __init__(self,llm='gpt-4o-mini',max_hop:int=5,entry_type="edge",if_hybrid=False,if_trim=False,cache_context_path="./context_outcome.json",tol=2,mock_dense=False,mock_sparse=False,topk=10,traversal="bfs",embedding_model=embed_model,reranker=None):
+        self.emb_model = load_embed_model(embedding_model)
         self.driver = GraphDatabase.driver(neo4j_url, auth=(neo4j_user, neo4j_password), database=neo4j_dbname, notifications_disabled_categories=neo4j_notification_filter)
         self.max_hop = max_hop
         self.entry_type = entry_type
@@ -22,10 +22,13 @@ class HopRetriever:
         self.tol = tol
         self.mock_dense = mock_dense
         self.mock_sparse = mock_sparse
-        self.label = label # Determines from which index to retrieve, as different datasets have different indexes based on node type and edge type
-        self.reasoning_model = llm
+        self.reasoning_model = load_language_model(llm)
         self.topk=topk
         self.traversal=traversal
+        if reranker is not None:
+            model,tokenizer=load_rerank_model(reranker)
+            self.rerank_model,self.rerank_tokenizer=model,tokenizer
+            self.topk=topk*2
 
     def process_query(self,query):
         # get embedding and keywords for hybrid retrieval
@@ -34,16 +37,23 @@ class HopRetriever:
         query_keywords=' '.join(sorted(list(query_keywords))) # str
         return query_embedding, query_keywords
     
+    def query_reformulation(self,query):
+        chat = [] 
+        chat.append({"role": "user", "content": query_reformulation_template.format(query=query)})
+        outcome = get_chat_completion(chat, keys=["Subqueries"],model=self.reasoning_model)
+        subqueries=outcome[0]
+        return subqueries
+    
     def hybrid_retrieve_edge(self,keywords:str,embedding:List,context:Dict):
         startNode_sparse=[]
         startNode_dense=[]
         with self.driver.session() as session:
-            result=session.run(retrieve_edge_sparse_query.format(keywords=repr(keywords),index=repr(f'{self.label}edge_sparse_index')))
+            result=session.run(retrieve_edge_sparse_query.format(keywords=repr(keywords),index=repr(edge_sparse_index_name)))
             if result is None:
                 return None
             for record in result: 
                 startNode_sparse.append((record['endNode'],record['sparse_edge'],record['sparse_score']))
-            result=session.run(retrieve_edge_dense_query.format(embedding=embedding,index=repr(f'{self.label}edge_dense_index')))
+            result=session.run(retrieve_edge_dense_query.format(embedding=embedding,index=repr(edge_dense_index_name)))
             if result is None:
                 return None
             for record in result:
@@ -63,12 +73,12 @@ class HopRetriever:
         startNode_sparse=[]
         startNode_dense=[]
         with self.driver.session() as session:
-            result=session.run(retrieve_node_sparse_query.format(keywords=repr(keywords),index=repr(f'{self.label}node_sparse_index')))
+            result=session.run(retrieve_node_sparse_query.format(keywords=repr(keywords),index=repr(node_sparse_index_name)))
             if result  is None:
                 return None
             for record in result:
                 startNode_sparse.append((record['sparse_node'],record['sparse_score']))
-            result=session.run(retrieve_node_dense_query.format(embedding=embedding,index=repr(f'{self.label}node_dense_index')))
+            result=session.run(retrieve_node_dense_query.format(embedding=embedding,index=repr(node_dense_index_name)))
             if result is None: 
                 return None
             for record in result:
@@ -86,7 +96,7 @@ class HopRetriever:
     def dense_retrieve_node(self ,embedding:List,context:Dict):
         startNode_dense=[]
         with self.driver.session() as session:
-            result=session.run(retrieve_node_dense_query.format(embedding=embedding,index=repr(f'{self.label}node_dense_index')))
+            result=session.run(retrieve_node_dense_query.format(embedding=embedding,index=repr(node_dense_index_name)))
             if result is None:
                 return None
             for record in result:
@@ -102,7 +112,7 @@ class HopRetriever:
     def dense_retrieve_edge(self,embedding:List,context:Dict):
         startNode_dense=[]
         with self.driver.session() as session:
-            result=session.run(retrieve_edge_dense_query.format(embedding=embedding,index=repr(f'{self.label}edge_dense_index')))
+            result=session.run(retrieve_edge_dense_query.format(embedding=embedding,index=repr(edge_dense_index_name)))
             if result is None:
                 return None
             for record in result:
@@ -114,7 +124,7 @@ class HopRetriever:
     def sparse_retreive_node(self,keywords:str,context:Dict):
         startNode_sparse=[]
         with self.driver.session() as session:
-            result=session.run(retrieve_node_sparse_query.format(keywords=repr(keywords),index=repr(f'{self.label}node_sparse_index')))
+            result=session.run(retrieve_node_sparse_query.format(keywords=repr(keywords),index=repr(node_sparse_index_name)))
             if result  is None:
                 return None
             for record in result:
@@ -318,7 +328,7 @@ class HopRetriever:
             while count<self.max_hop:
                 queue=queue[:20]#
                 count+=1
-                print(f"current count:{count},len(queue):{len(queue)}")
+                api_call_time=0
                 queue_irrelevant=[]
                 for i in range(len(queue)):
                     if self.traversal=='bfs':
@@ -326,6 +336,7 @@ class HopRetriever:
                     elif self.traversal=='bfs_sim_node':
                         node_content,node_emb=queue.pop(0)
                     if node_content not in judged_outcome:
+                        api_call_time+=1
                         if self.traversal=='bfs':
                             judged_outcome=self.judge(node_content,judged_outcome,query)
                         elif self.traversal=='bfs_sim_node':
@@ -340,7 +351,7 @@ class HopRetriever:
                             queue_irrelevant.append(new_text)
                         else:
                             queue.append(new_text) # Neighbors of completely Irrelevant nodes won't be directly added to the queue, they have lower priority, unless the queue is empty and needs to be filled
-
+                print(f"current count:{count},calling times:{api_call_time}")
                 helpful=[]
                 relevant=[]
                 irrelevant=[]
@@ -352,8 +363,8 @@ class HopRetriever:
                     else:
                         irrelevant.append(node)
                 outcome=helpful+relevant+irrelevant
-                if len(helpful)>=5:
-                    break
+                #if len(helpful)>=5:
+                #    break
                 if count<self.max_hop and len(queue)<5: # If there aren’t enough hops or the queue is empty, refill the queue
                     logger.info(f"{len(helpful)} helpful nodes found, {len(relevant)} relevant nodes found, {len(irrelevant)} irrelevant nodes found, {len(queue)} nodes in queue")
                     queue+=queue_irrelevant
@@ -387,9 +398,29 @@ class HopRetriever:
             return self.search_docs_bfs(query)
         else:
             raise ValueError("traversal type must be 'dfs' or 'bfs' or 'bfs_sim_node' ")
-        
+    
+    def search_docs_rerank(self,query:str)->List[str]:
+        if self.traversal=='dfs':
+            context=self.search_docs_dfs(query)
+        elif self.traversal in ['bfs','bfs_sim_node']:
+            context=self.search_docs_bfs(query)
+        else:
+            raise ValueError("traversal type must be 'dfs' or 'bfs' or 'bfs_sim_node' ")
+        pairs=[]
+        for passage in context:
+            pair=[query,passage]
+            pairs.append(pair)
+        with torch.no_grad():
+            inputs = self.rerank_tokenizer(pairs, padding=True, truncation=True, return_tensors='pt', max_length=512).to(self.rerank_model.device)
+            scores = self.rerank_model(**inputs, return_dict=True).logits.view(-1, ).float()
+            scores = scores.cpu().numpy()
+        sorted_indices = np.argsort(scores)[::-1] # Sort in descending order
+        sorted_context = [context[i] for i in sorted_indices]
+        return sorted_context[:self.topk//2] # when using reranker topk gets doubled when init, so here it should be reduced by half
+                       
 if __name__ == "__main__":
-    query="Were Scott Derrickson and Ed Wood of the same nationality?"
-    retriever = HopRetriever(max_hop = 4, entry_type="node",if_trim=False,if_hybrid=False,tol=30,label='hotpot_example_',topk=20,traversal='bfs',mock_dense=False)
+    query="Donnie Smith who plays as a left back for New England Revolution belongs to what league featuring 22 teams?"
+    retriever = HopRetriever(llm=traversal_model,max_hop = 2, entry_type="node",if_trim=False,if_hybrid=False,
+                             tol=30,topk=2,traversal='bfs',mock_dense=False,reranker=None)# no reranking then reranker=None; else: reranker=reranker
     context = retriever.search_docs(query)
     print(context)

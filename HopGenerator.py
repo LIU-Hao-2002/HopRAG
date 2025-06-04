@@ -10,8 +10,12 @@ import time
 parser = argparse.ArgumentParser()
 # Model related options
 parser.add_argument('--model_name', default='gpt-3.5-turbo', help="Name of the model to generate responses")
+parser.add_argument('--traversal_model', default=traversal_model, help="Name of the model to traverse the graph")
+parser.add_argument('--embedding_model', default=embed_model, help="Name of the model to generate embeddings")
+parser.add_argument('--rerank_model', default=None, help="Name of the model to rerank the retrieved passages")
 # Dataset related options
 parser.add_argument('--data_path', default='quickstart_dataset/hotpot_example.jsonl', help="Path to the queries")
+parser.add_argument('--save_dir', default='quickstart_dataset/hotpot_output', help="dir to save outcome")
 parser.add_argument('--retriever_name', default="HopRetriever", help="Name of the retriever")
 
 # arguments for HopRAG  
@@ -24,11 +28,11 @@ parser.add_argument('--hybrid', action='store_true', default=False)
 parser.add_argument('--tol',default=20,type=int)
 parser.add_argument('--mock_dense',action='store_true',default=False)
 parser.add_argument('--mock_sparse',action='store_true',default=False)
-parser.add_argument('--mode',default='common',type=str,help='common,sp,cache')
-parser.add_argument('--label',type=str,default='hotpot_example_',help='the shared prefix of the index for one dataset in neo4j')
+parser.add_argument('--mode',default='common',type=str,help='common,sp,cache,reformulate,rerank')
+parser.add_argument('--label',type=str,default='hotpot_example_',help='the label for the output dir, used to distinguish different runs')
 parser.add_argument('--topk',default=8,type=int)
 parser.add_argument('--traversal',default='bfs',type=str,help='bfs,bfs_sim_node,dfs')
-
+parser.add_argument('--retrieve_only',action='store_true', default=False,help='whether to only retrieve the context')
 generate_prompt="""You are a helpful assistant. Please answer my question given the following context. If the context lacks necessary information to answer the question, please try your best to reason and answer in the right format. You have to give an answer no matter what.
 
 Please reply in a json format with only your answer. Do not repeat the context. The correct format is as follows:
@@ -54,9 +58,9 @@ class RagPipeline:
 
     def _get_retriever(self):
         if self.args.retriever_name == "HopRetriever":
-            retriever = HopRetriever(max_hop=self.args.max_hop,entry_type=self.args.entry_type,if_trim=self.args.trim,
+            retriever = HopRetriever(llm=self.args.traversal_model,embedding_model=self.args.embedding_model,max_hop=self.args.max_hop,entry_type=self.args.entry_type,if_trim=self.args.trim,
                                      if_hybrid=self.args.hybrid,tol=self.args.tol,mock_dense=self.args.mock_dense,mock_sparse=self.args.mock_sparse,
-                                     label=self.args.label,topk=self.args.topk,traversal=self.args.traversal)
+                                     topk=self.args.topk,traversal=self.args.traversal,reranker=self.args.rerank_model)
         else:
             raise ValueError(f"Unknown retriever: {self.args.retriever_name}")
         return retriever
@@ -64,35 +68,29 @@ class RagPipeline:
     def retrieve(self,query)->List[str]:
         return self.retriever.search_docs(query)
     
+    def reformulate_retrieve(self,query:str)->List[str]:
+        subqueries=self.retriever.query_reformulation(query)
+        final_context=[]
+        num_sub=len(subqueries)
+        per_topk=self.args.topk//num_sub+1
+        for subquery in subqueries:
+            context=self.retrieve(subquery)
+            final_context+=context[:per_topk]
+        return final_context[:self.args.topk]
     
-    def retrieve2_musique(self, query)->List[str]:
-        #musique: convert the SP of each question to context
-        question_dict=[x for x in self.questions if x['question']==query][0]
-        paragraphs=question_dict['paragraphs']
-        context=[x['paragraph_text'] for x in paragraphs if x['is_supporting']==True]
-        return context
-
-    def retrieve2_hotpot(self, query)->List[str]:
-        #hotpot: convert the SP of each question to context
-        question_dict=[x for x in self.questions if x['question']==query][0]
-        sp=question_dict['supporting_facts']
-        context=[]
-        docs=question_dict['context']
-        hash_={}
-        for title,sentence_list in docs:
-            hash_[title]={}
-            for i,sentence in enumerate(sentence_list):
-                hash_[title][i]=sentence
-        for title,index in sp:
-            context.append(hash_[title][index])
-        return context
+    def retrieve_rerank(self,query:str)->List[str]:
+        return self.retriever.search_docs_rerank(query)
     
     
-    def rag(self,query:str):
-        if self.args.mode=='sp':
-            context=self.retrieve2_hotpot(query) # list
+    def rag(self,query:str,retrieve_only=False):
+        if self.args.mode=="reformulate":
+            context=self.reformulate_retrieve(query)
+        elif self.args.mode=="rerank":
+            context=self.retrieve_rerank(query)
         else:
             context=self.retrieve(query)
+        if retrieve_only:
+            return "I don't know because of retrieval only",context
         chat=[]
         chat.append({"role": "user", "content": generate_prompt.format(query=query,context=context)})
         answer, chat = get_chat_completion(chat, keys=["answer"],model=self.args.model_name)
@@ -133,8 +131,7 @@ def get_sentence2titid_hotpot(question_path):
             json.dump(sentence2titid,f)
         return sentence2titid#for hotpot
 
-def main_musique():
-    args = parser.parse_args()
+def main_musique(args):
     rag_pipeline = RagPipeline(args)
     questions_path=args.data_path
     questions=[]
@@ -142,7 +139,7 @@ def main_musique():
         for line in f:
             questions.append(json.loads(line))
     rag_pipeline.questions=questions
-    result_dir=f"quickstart_dataset/musique_output/{args.retriever_name}_{args.model_name}_{args.max_hop}_mock_dense_{args.mock_dense}_mock_sparse_{args.mock_sparse}_mode_{args.mode}_topk_{args.topk}_traversal_{args.traversal}"
+    result_dir=f"{args.save_dir}/{args.retriever_name}_{args.model_name}_traversal_{args.traversal_model.split('/')[-1]}_{args.embedding_model}_{args.label}_{args.mode}"
     id2json={}
     if os.path.exists(result_dir):
         cache_dir=f"{result_dir}/cache"
@@ -193,8 +190,7 @@ def main_musique():
         for res in result:
             f.write(json.dumps(res)+'\n')
 
-def main_hotpot():
-    args = parser.parse_args()
+def main_hotpot(args):
     rag_pipeline = RagPipeline(args)
     questions_path=args.data_path
     questions=[]
@@ -202,7 +198,7 @@ def main_hotpot():
         for line in f:
             questions.append(json.loads(line))
     rag_pipeline.questions=questions
-    result_dir=f"quickstart_dataset/hotpot_output/{args.retriever_name}_{args.model_name}_{args.max_hop}_mock_dense_{args.mock_dense}_mock_sparse_{args.mock_sparse}_mode_{args.mode}_topk_{args.topk}_traversal_{args.traversal}"
+    result_dir=f"{args.save_dir}/{args.retriever_name}_{args.model_name}_traversal_{args.traversal_model.split('/')[-1]}_{args.embedding_model}_{args.label}_{args.mode}"
     if os.path.exists(result_dir):
         result_dir=result_dir+'_1'
     os.makedirs(result_dir,exist_ok=True)
@@ -216,7 +212,7 @@ def main_hotpot():
         _id=data['_id']
         query=data['question']
         try:
-            response,context=rag_pipeline.rag(query)
+            response,context=rag_pipeline.rag(query,retrieve_only=args.retrieve_only) #
             contexts.append(context)
         except Exception as e:
             logger.info(f"{_id} error:{e}")
@@ -240,4 +236,25 @@ def main_hotpot():
         json.dump(res,f)
 
 if __name__ == "__main__":
-    main_hotpot()# main_musique()
+    # before starting, pay attn to embed_model and cuda_device in config.py 
+    args = parser.parse_args()
+    if 'musique' in args.data_path:
+        main_musique(args)
+    else:
+        main_hotpot(args)
+
+'''
+nohup python3 HopGenerator.py --model_name 'gpt-3.5-turbo' --data_path 'quickstart_dataset/musique_example.jsonl' --save_dir quickstart_dataset/musique_output \
+--retriever_name 'HopRetriever' --max_hop 4 --topk 20 --traversal bfs --mode common --label 'musique_bgeen_qwen1b5_' > musique_bgeen_qwen1b5_35.txt  &
+'''
+
+'''
+nohup python3 HopGenerator.py --model_name 'gpt-3.5-turbo' --data_path 'quickstart_dataset/hotpot_example.jsonl' --save_dir quickstart_dataset/hotpot_output \
+--retriever_name 'HopRetriever' --max_hop 4 --topk 20 --traversal bfs --mode common --label 'hotpot_bgeen_qwen1b5_' > hotpot_bgeen_qwen1b5_35.txt  &
+'''
+
+
+'''
+nohup python3 HopGenerator.py --model_name 'gpt-3.5-turbo' --data_path 'dataset/wiki.jsonl' --save_dir dataset/wiki_output \
+--retriever_name 'HopRetriever' --max_hop 4 --topk 20 --traversal bfs --mode common --label 'wiki_bgeen_qwen1b5_' > wiki_bgeen_qwen1b5_35.txt  &
+'''

@@ -2,13 +2,20 @@ import json
 from tqdm import tqdm
 import jsonlines
 import os
+import json
 
 def process_data(source_path, docs_dir, output_path):
     doc2id = {}
-    
     # Open and load the source data
-    with open(source_path, 'r') as f:
-        data = json.load(f)
+    data=[]
+    if source_path.endswith('.jsonl'):
+        with open(source_path, 'r') as f:
+            for line in f.readlines():
+                data.append(json.loads(line))
+    else:
+        #for json
+        with open(source_path, 'r') as f:
+            data=json.load(f) # list
     
     # Process the entries and create text files for documents
     for temp in tqdm(data):
@@ -31,11 +38,12 @@ def process_data(source_path, docs_dir, output_path):
     
     # Print completion message
     print(f'done: all text files saved to directory {docs_dir}')
-    
+
     # Write the data to a jsonlines file
-    with jsonlines.open(output_path, mode='w') as writer:
-        for result in data:
-            writer.write(result)
+    if source_path.endswith('.json'):
+        with jsonlines.open(output_path, mode='w') as writer:
+            for result in data:
+                writer.write(result)
 
 def process_data_musique(source_path, docs_dir):
     if not os.path.exists(docs_dir):
@@ -74,22 +82,16 @@ def process_data_musique(source_path, docs_dir):
         json.dump(id2txt,f)
     
 
-def main_hotpot_2wiki():
+def main_hotpot_2wiki(source_path = 'quickstart_dataset/hotpot_example.json',docs_dir = 'quickstart_dataset/hotpot_example_docs'):
     # for hotpotqa or 2wiki dataset, you can proprocess it like this:
-    source_path = 'quickstart_dataset/hotpot_example.json'
-    docs_dir = 'quickstart_dataset/hotpot_example_docs'
     output_path = source_path.replace('.json', '.jsonl')    
     # Call the function with the provided paths
     process_data(source_path, docs_dir, output_path)
 
-def main_musique():
+def main_musique(source_path='quickstart_dataset/musique_example.jsonl',docs_dir = 'quickstart_dataset/musique_example_docs'):
     # for musique dataset, you can proprocess it like this:
-    source_path = 'quickstart_dataset/musique_example.jsonl'
-    docs_dir = 'quickstart_dataset/musique_example_docs'  
     # Call the function with the provided paths
     process_data_musique(source_path, docs_dir)
 
 if __name__ == "__main__":
     main_hotpot_2wiki()
-
-

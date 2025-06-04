@@ -20,7 +20,9 @@ logger = loguru.logger
 class QABuilder:
     def __init__(self,done:Set[str]={},label="hotpot_example"):
         self.emb_model = load_embed_model(embed_model)  
-        self.driver = GraphDatabase.driver(neo4j_url, auth=(neo4j_user, neo4j_password), database=neo4j_dbname, notifications_disabled_categories=neo4j_notification_filter)
+        self.query_generator = load_language_model(query_generator_model)
+        #self.driver = GraphDatabase.driver(neo4j_url, auth=(neo4j_user, neo4j_password), database=neo4j_dbname, notifications_disabled_categories=neo4j_notification_filter)
+        self.driver = None # if offline, we don't need to connect to neo4j; we will connect to neo4j when necessary
         self.edges=None # pending2answerable
         self.abstract2chunk=None # pseudo abstract to chunk
         self.done=done
@@ -28,36 +30,46 @@ class QABuilder:
 
     def get_single_doc_qa(self, doc:str)->Dict[str,Tuple[str,Set,np.ndarray,Dict[str,List[Tuple[str,Set,np.ndarray]]],str]]: 
         def process_sentence(sentence_list:List[str],keywords:Set)->Tuple[Dict[str,List[Tuple[str,Set,np.ndarray]]],np.ndarray,str]:
+            # each process_sentence function deals with a node, so it can be parallelized
+            if type(sentence_list)==str:
+                sentence_list=[sentence_list]# fix the old bug: sentence list has to be a list!!
             if len(sentence_list)==0:
                 return None
             elif len(sentence_list)==1:
                 temp=sentence_list[0]
             else:
                 temp=','.join(sentence_list)
+            #temp is the chunk in each node(str)
             sentence_embeddings=get_doc_embeds(temp, self.emb_model)
             questions_dict={}
-            question_list_answerable = get_question_list(extract_template_fixed_eng, sentence_list)  
+            question_list_answerable = get_question_list(extract_template_fixed_eng, sentence_list,query_generator=self.query_generator)  
             if len(question_list_answerable)==0:
                 return None 
             answerable_embeddings=get_doc_embeds(question_list_answerable, self.emb_model)
-            question_list_pending = get_question_list(extract_template_pending_eng, temp)
+            question_list_pending = get_question_list(extract_template_pending_eng, temp,query_generator=self.query_generator)
             if len(question_list_pending)==0:
                 return None 
             pending_embeddings=get_doc_embeds(question_list_pending, self.emb_model)
             questions_dict['answerable']=[(question,keywords,emb) for question,emb in zip(question_list_answerable,answerable_embeddings)]
             questions_dict['pending']=[(question,keywords,emb) for question,emb in zip(question_list_pending,pending_embeddings)]
-            return questions_dict,sentence_embeddings,self.label
+            return questions_dict,sentence_embeddings,self.label# two types of questions, chunk embedding and label for this node;
         
-        title,keywords=get_title_keywords_eng(title_template_eng,doc)
-        sentences = doc.split(signal) # For Hotpot QA, split each chunk by every "\n\n", where each sentence is a chunk and a node; for Musique, each text is a node
-
+        title,keywords=get_title_keywords_eng(title_template_eng,doc,query_generator=self.query_generator)
+        chunks = doc.split(signal) # For Hotpot QA, split each chunk by every "\n\n", where each sentence is a chunk inside a node; for Musique, each text is a node
+        #chunks:list[str]
+        #sentences: list[list[str]]
+        sentences=[chunk.split(',') for chunk in chunks]
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_thread_num) as executor:
-            futures = [executor.submit(process_sentence, sentence_list,keywords) for sentence_list in sentences]
+            futures = [executor.submit(process_sentence, sentence_list,keywords) for sentence_list in sentences] 
             results = [future.result() for future in futures] # list of tuple 
-        results=[result for result in results if result is not None]  
-
+        sentences_final=[]
+        results_final=[]
+        for i in range(len(sentences)):
+            if results[i] is not None:
+                sentences_final.append(sentences[i])
+                results_final.append(results[i]) # fix bug
         outcome=dict() # sentence2node
-        for sentence,result in zip(sentences,results):
+        for sentence,result in zip(sentences_final,results_final):
             if type(sentence)==list:
                 if len(sentence)==1:
                     sentence=sentence[0]
@@ -70,8 +82,10 @@ class QABuilder:
                 outcome[sentence]=(sentence,keywords,result[1],result[0],result[2])
         return outcome 
     
-
     def create_nodes(self,docs_dir:str='/path/to/docs')->Tuple[Dict[str,List[int]],Dict[Tuple[int,str],Dict[str,List[Tuple[str,Set,np.ndarray]]]]]:
+        logger.info(f"!!! starting creating online nodes called {self.label} for docs in {docs_dir}")
+        if self.driver is None:
+            self.driver = GraphDatabase.driver(neo4j_url, auth=(neo4j_user, neo4j_password), database=neo4j_dbname, notifications_disabled_categories=neo4j_notification_filter)
         docs_pool=os.listdir(docs_dir) 
         docid2nodes={}
         node2questiondict={}
@@ -99,8 +113,67 @@ class QABuilder:
         self.driver.close()
         return docid2nodes,node2questiondict# 
     
+    def create_nodes_offline(self,docs_dir:str='/path/to/docs',start_index=0,span=100)->Tuple[Dict[str,List[int]],Dict[Tuple[int,str],Dict[str,List[Tuple[str,Set,np.ndarray]]]]]:
+        logger.info(f" starting creating offline nodes called {self.label} for docs in {docs_dir} from index {start_index} to {start_index+span-1}")
+        docs_pool=os.listdir(docs_dir) 
+        docid2nodes={}
+        node2questiondict={}
+        node_id=start_index*50 # assume 50 nodes for each previous doc to avoid node_id conflict
+        for doc_id in tqdm(docs_pool[start_index:start_index+span],desc='create_nodes'): 
+            if doc_id in self.done:
+                continue
+            try:
+                nodes_id=[]
+                doc_dir=os.path.join(docs_dir,doc_id)
+                with open(doc_dir,'r') as f:
+                    doc=f.read()
+                    sentence2node=self.get_single_doc_qa(doc)
+                    for text,tup in sentence2node.items():
+                        node={'text':tup[0],'keywords':sorted(list(tup[1])),'embed':tup[2]} # Convert the keywords set to a list before passing it to the Neo4j query
+                        type=self.label # since we don't need to push nodes online here, pls do not uncomment the following line
+                        # node_id=session.run(create_entity_query.format(type=type),{'text':node['text'],'keywords':node['keywords'],'embed':node['embed']}).single()[0] # Add the attributes later when the edges are created
+                        node_id+=1
+                        node2questiondict[(node_id,doc_id)]=(node,tup[3]) # cache the node
+                        nodes_id.append(node_id)
+                docid2nodes[doc_id]=nodes_id
+            except Exception as e:
+                logger.info(f'error:{doc_id}——{e}')
+                time.sleep(3)
+                continue
+        return docid2nodes,node2questiondict# 
+    
+    def create_nodes_cache(self,cache_dir:str="path/to/cache_dir")->Tuple[Dict[str,List[int]],Dict[Tuple[int,str],Dict[str,List[Tuple[str,Set,np.ndarray]]]]]:
+        logger.info(f'!!! creating {self.label} nodes online from {cache_dir}')
+        if self.driver is None:
+            self.driver = GraphDatabase.driver(neo4j_url, auth=(neo4j_user, neo4j_password), database=neo4j_dbname, notifications_disabled_categories=neo4j_notification_filter)
+        with open(f'{cache_dir}/node2questiondict.pkl','rb') as f:
+            old_node2questiondict=pickle.load(f) # please notice that old_node2questiondict from offline is (nodeid,docid) to nodedict
+        with open(f'{cache_dir}/docid2nodes.json','r') as f:
+            old_docid2nodes=json.load(f)
+        new_node2questiondict={}
+        new_docid2nodes={}
+        cnt=0
+        with self.driver.session() as session:
+            for doc_id,old_node_ids in old_docid2nodes.items():
+                if cnt%10==0:
+                    logger.info(f'processing doc {doc_id} with {len(old_node_ids)} nodes and {cnt} docs processed so far')
+                    time.sleep(1)
+                cnt+=1
+                nodes_id=[]# one new node for each sentence
+                for old_node in old_node_ids:
+                    node,questiondict=old_node2questiondict[(old_node,doc_id)]
+                    type=self.label ###
+                    node_id=session.run(create_entity_query.format(type=type),{'text':node['text'],'keywords':node['keywords'],'embed':node['embed']}).single()[0] # Add the attributes later when the edges are created
+                    new_node2questiondict[(node_id,doc_id)]=questiondict
+                    nodes_id.append(node_id)
+                new_docid2nodes[doc_id]=nodes_id
+        self.driver.close()
+        return new_docid2nodes,new_node2questiondict 
+    
     def create_edge(self,node2questiondict,docid2nodes):
         # table:nodeid question_label question_id embedding question keywords
+        if self.driver is None:
+            self.driver = GraphDatabase.driver(neo4j_url, auth=(neo4j_user, neo4j_password), database=neo4j_dbname, notifications_disabled_categories=neo4j_notification_filter)
         def get_sparse_similarity_transform(group):
             group['sparse_similarity']=sparse_similarities_result[(str(group.iloc[0]['keywords_x']),str(group.iloc[0]['keywords_y']))]
             return group
@@ -132,7 +205,6 @@ class QABuilder:
         del sparse_similarities_result
         cartesian['similarity']=cartesian['dense_similarity']+cartesian['sparse_similarity'] # Weight
         idx=cartesian.groupby('question_x')['similarity'].idxmax() # For each follow-up question, find the most relevant answer question, which may come from the same document but different nodes, or from different documents' nodes
-
         cartesian1=cartesian.loc[idx] 
         cartesian2=cartesian.loc[cartesian['doc_id_x']!=cartesian['doc_id_y']] # To avoid building edges all within the same document, a fallback edge creation step ensures different documents. However, the final similarity trimming is done together with edges from the same document (the downside is that this part tends to retain fewer edges)
         del cartesian,idx
@@ -179,7 +251,7 @@ class QABuilder:
     def create_edges_musique(self,node2questiondict,docid2nodes,problems_path="/path/to/musique/musique_problems.jsonl"):
         with open(problems_path,'r') as f:
             problems=[json.loads(line) for line in f]
-        id2txt=json.load(open('quickstart_dataset/musique_example_id2txt.json','r'))
+        id2txt=json.load(open(problems_path.replace('.jsonl','_id2txt.json'),'r')) # this file is created in process_data_musique in data_preprocess.py
         for problem in tqdm(problems,'create_edges_musique'): # 
             id=problem['id']
             if id in self.done:
@@ -215,23 +287,26 @@ class QABuilder:
                 logger.info(f'{id} error {e}')
                 continue # for hotpot； 
 
-    def create_index(self):
+    def create_index(self): # change the xxx_name in config.py before calling
+        if self.driver is None:
+            self.driver = GraphDatabase.driver(neo4j_url, auth=(neo4j_user, neo4j_password), database=neo4j_dbname, notifications_disabled_categories=neo4j_notification_filter)
         with self.driver.session() as session:
-            index,type=f'hotpot_example_node_dense_index',self.label
+            index,type=node_dense_index_name,self.label
             index_cypher = create_node_dense_index_template.format(name=index, property="embed", dim=embed_dim,type=type)
             session.run(index_cypher)
-            index,type=f"hotpot_example_edge_dense_index",f'pen2ans_hotpot_example'
+            index,type=edge_dense_index_name,edge_name
             index_cypher = create_edge_dense_index_template.format(name=index,  property="embed", dim=embed_dim,type=type)
             session.run(index_cypher)
-            index,type=f"hotpot_example_node_sparse_index",self.label
+            index,type=node_sparse_index_name,self.label 
             index_cypher = create_node_sparse_index_template.format(name=index, property="keywords",type=type) # Both edges and nodes have attributes as lists during creation
             session.run(index_cypher)
-            index,type=f"hotpot_example_edge_sparse_index",f'pen2ans_hotpot_example'
+            index,type=edge_sparse_index_name,edge_name
             index_cypher = create_edge_sparse_index_template.format(name=index, property="keywords",type=type) # Both edges and nodes have attributes as lists during creation
             session.run(index_cypher)            
         self.driver.close()
 
-def main_nodes(cache_dir='quickstart_dataset/cache_hotpot'):
+def main_nodes(cache_dir='quickstart_dataset/cache_hotpot',docs_dir="quickstart_dataset/hotpot_example_docs",label="hotpot_test",start_index=0,span=50,original_cache_dir=None,offline=True):
+    logger.info(f"starting indexing docs from {docs_dir}: from starting index {start_index} to ending index {start_index+span-1}")
     if not os.path.exists(cache_dir):
         os.makedirs(cache_dir)
     start_time=time.time()
@@ -242,9 +317,14 @@ def main_nodes(cache_dir='quickstart_dataset/cache_hotpot'):
     else:
         docid2nodes_old={}
     done=set(docid2nodes_old.keys())
-    docs_dir='quickstart_dataset/hotpot_example_docs'
-    builder = QABuilder(done=done)
-    docid2nodes,node2questiondict=builder.create_nodes(docs_dir)
+    builder = QABuilder(done=done,label=label)
+    if original_cache_dir is None:
+        if offline:
+            docid2nodes,node2questiondict=builder.create_nodes_offline(docs_dir,start_index=start_index,span=span)
+        else:
+            docid2nodes,node2questiondict=builder.create_nodes(docs_dir)
+    else:
+        docid2nodes,node2questiondict=builder.create_nodes_cache(original_cache_dir)###
     print(docid2nodes)#  
     if os.path.exists(f'{cache_dir}/node2questiondict.pkl'):
         with open (f'{cache_dir}/node2questiondict.pkl','rb') as f:
@@ -262,7 +342,8 @@ def main_nodes(cache_dir='quickstart_dataset/cache_hotpot'):
     end_time=time.time()
     print('time:',end_time-start_time)
 
-def main_edges_index(cache_dir='quickstart_dataset/cache_hotpot'):
+def main_edges_index(cache_dir='quickstart_dataset/cache_hotpot',problems_path="quickstart_dataset/hotpot_example.jsonl",label='hotpot_test'):
+    logger.info(f"!!! starting creating edges called {edge_name} for node {label} and then build index called {node_dense_index_name} and {edge_dense_index_name} and {node_sparse_index_name} and {edge_sparse_index_name}")
     if not os.path.exists(cache_dir):
         os.makedirs(cache_dir)
     start_time=time.time()
@@ -278,15 +359,17 @@ def main_edges_index(cache_dir='quickstart_dataset/cache_hotpot'):
             done=pickle.load(f)
     else:
         done=set()
-    builder = QABuilder(done=done)
+    builder = QABuilder(done=done,label=label)
     if os.path.exists(f'{cache_dir}/node2questiondict.pkl'):
         with open (f'{cache_dir}/node2questiondict.pkl','rb') as f:
             node2questiondict_old=pickle.load(f)
     else:
         node2questiondict_old={}
     node2questiondict=node2questiondict_old
-    builder.create_edges_hotpot(node2questiondict,docid2nodes,problems_path="quickstart_dataset/hotpot_example.jsonl")  
-
+    if "musique" in label:
+        builder.create_edges_musique(node2questiondict,docid2nodes,problems_path=problems_path)
+    else:
+        builder.create_edges_hotpot(node2questiondict,docid2nodes,problems_path=problems_path)  
     with open(f'{cache_dir}/edges_done.pkl','wb') as f:
         pickle.dump(builder.done,f)
     end_time=time.time()
@@ -295,5 +378,28 @@ def main_edges_index(cache_dir='quickstart_dataset/cache_hotpot'):
     builder.create_index()
 
 if __name__ == "__main__":
-    main_nodes()
-    main_edges_index()
+    # for creating nodes, there are two ways: 1. offline and online seperate; 2. offline and online hybrid. the first one recommended.
+
+    # 1. separate mode has two consecutive steps:
+    #   (1) offline mode:first change cuda device and nodename in config.py
+    # main_nodes(cache_dir='quickstart_dataset/cache_hotpot_offline',docs_dir="quickstart_dataset/hotpot_example_docs",label=node_name,
+    #                start_index=0,span=12000)
+
+    #   (2) after finishing (1), push offline cache to online neo4j; first change cuda device and nodename in config.py
+    # this step will create new cache_dir (e.g. cache_hotpot_online), feel free to delete original_cache_dir after finishing online indexing
+    # main_nodes(cache_dir='quickstart_dataset/cache_hotpot_online',docs_dir="quickstart_dataset/hotpot_example_docs",label=node_name,
+    #                start_index=0,span=12000,original_cache_dir='quickstart_dataset/cache_hotpot_offline')  
+    
+    # 2. hybrid mode is an alternative way to create nodes and edges in one step:
+    # main_nodes(cache_dir='quickstart_dataset/cache_hotpot_online', docs_dir="quickstart_dataset/hotpot_example_docs",label=node_name,
+    #  start_index=0,span=12000,offline=False,original_cache_dir=None)
+
+
+    # for creating edges, it's much eaiser. first make sure creating nodes is finished and change dataset_name,node_name and edge_name in config.py
+    main_edges_index(cache_dir="quickstart_dataset/cache_hotpot_online",
+                     problems_path='quickstart_dataset/hotpot_example.jsonl',
+                     label=node_name)
+    
+
+    
+# nohup python HopBuilder.py >> hotpot_builder.txt &

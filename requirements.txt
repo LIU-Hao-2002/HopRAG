@@ -9,3 +9,4 @@ paddlepaddle
 paddlenlp
 swifter
 jsonlines
+modelscope
