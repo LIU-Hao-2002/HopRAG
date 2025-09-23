@@ -169,7 +169,7 @@ If you find our work useful in your research, please cite our paper:
 
 ```bibtex
 @article{liu2025hoprag,
-  title={Hoprag: Multi-hop reasoning for logic-aware retrieval-augmented generation},
+  title={{HopRAG}: Multi-hop reasoning for logic-aware retrieval-augmented generation},
   author={Liu, Hao and Wang, Zhengren and Chen, Xi and Li, Zhiyu and Xiong, Feiyu and Yu, Qinhan and Zhang, Wentao},
   journal={arXiv preprint arXiv:2502.12442},
   year={2025}
