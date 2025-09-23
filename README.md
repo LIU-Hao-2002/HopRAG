@@ -1,6 +1,6 @@
 # HopRAG: Multi-hop Reasoning for Logic-Aware Retrieval-Augmented Generation
 
-[](https://opensource.org/licenses/MIT)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 Official repository for **HopRAG: Multi-hop Reasoning for Logic-Aware Retrieval-Augmented Generation**, accepted to ACL Findings 2025.
 
