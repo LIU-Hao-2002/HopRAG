@@ -24,7 +24,7 @@ Follow these steps to set up the HopRAG environment and prepare for your first r
 1.  **Clone the repository:**
 
     ```bash
-    git clone https://github.com/your-username/HopRAG.git
+    git clone https://github.com/HopRAG-Lab/HopRAG.git
     cd HopRAG
     ```
 
