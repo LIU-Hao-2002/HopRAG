@@ -1,91 +1,180 @@
-# Introduction  
-HopRAG is a Graph-based RAG project that stores passages in a Neo4j graph database(version:community 5.26.0), builds an index, and performs retrieval-augmented generation. It can be used for specific RAG evaluation datasets. 
-Note:All paths in the project files need to be replaced with your local paths. We provide demo datasets from HotpotQA, 2WikiMultiHop and MuSiQue for quickstart in `quickstart_dataset` and whole experimental data in `dataset`
+# HopRAG: Multi-hop Reasoning for Logic-Aware Retrieval-Augmented Generation
 
-## 0. Neo4j, LLM api, embedding model Preparation
-- Make sure you download neo4j database locally and can log into your account freely. Change the `neo4j_url`,`neo4j_user`,`neo4j_password`,`neo4j_dbname` in `config.py` so that you can log into it through python.
-- Change the `personal_base`,`personal_key`,`default_gpt_model` in `config.py` so that you can call LLM through api in python.
-- Make sure you download the embedding model locally and change the `embed_model`,`embed_model_dict`,`embed_dim` in `config.py`.
-- Optional: If you want to use local LLM for query generator and traversal model, or use local reranker, make sure you download the models locally and change the `reranker`,`query_generator_model`,`traversal_model` in `config.py`.
-- Please note that the recommended version of Neo4j is community 5.26.0; the recommended python version is 3.10.10
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## 1. Prepare the Dataset
-Preprocess `.json` or `.jsonl` format test set file using the `process_data` function in the `data_preprocess.py` file. The preprocessing will write the passages for all the questions from the test set as `.txt` files into the specified directory and transform the `.json` test file into `.jsonl` format. You might need to revise it according to the format of your own specific dataset. 
-- for hotpotqa or 2wiki dataset, you can proprocess it using `main_hotpot_2wiki` function. Please note that here the function will use `\n\n` to join sentences, which may affect your chunking delimeter `signal` in `config.py`. Please make sure they are consistent and customized to your chunking need. 
-- for musique dataset, since it is already in `.jsonl` format, we can use `main_musique` function to write the doc pool. Since different questions from musique dataset may include the same doc for context, we also produce a id2txt `.json` file to create the mapping from each id to its unique doc text. 
-- We prepare example datasets for quickstart, which are in dir `quickstart_dataset`.
+Official repository for **HopRAG: Multi-hop Reasoning for Logic-Aware Retrieval-Augmented Generation**, accepted to ACL Findings 2025.
 
+HopRAG is a novel Retrieval-Augmented Generation (RAG) framework that leverages graph databases to enhance multi-hop reasoning. Instead of treating documents as a flat collection, HopRAG models them as a graph of interconnected text chunks (nodes) within a **Neo4j** database. This structure allows for more sophisticated, logic-aware retrieval paths, enabling Large Language Models (LLMs) to answer complex questions that require synthesizing information from multiple sources.
 
-## 2. Build Nodes  
-Run the `main_nodes` function in the `HopBuilder.py` file to build nodes in the graph. Please note that the following variable needs to be reset before you begin:
-- Each node contains a chunk from a document text file in the doc pool directory (for example `quickstart_dataset/hotpot_example_docs` ). You can change the chunking delimeter by setting the `signal` in `config.py` according to the txt file in the doc pool.  
-- In neo4j, each node,edge and index has a type(namely its name). You can change these three names by chaning the following variables:
-    - for node type: `node_name` in `config.py` (here they are `hotpot_bgeen_qwen1b5` but you can change it according to your need)
-    - for edge type: the `edge_name` in `config.py`(here they are `pen2ans_hotpot_bgeen_qwen1b5` but you can change it according to your need)
-    - for index type: the four variables `node_dense_index_name`, `edge_dense_index_name`, `node_sparse_index_name` and `edge_sparse_index_name` in `config.py`, respectively for node_dense_index, edge_dense_index, node_sparse_index, edge_sparse_index. These index names will be used: (1) in `HopBuilder.py` to create index (2) in `HopRetriever.py` to retrieve. So before running `HopBuilder.py` or `HopRetriever.py` please specify them in `config.py` so as to build or retrieve the correct index.
-- In `main_nodes` function, the following variables are introduced:
-    - `cache_dir`: to save the nodes that are finished. Since building nodes from a large pool of documents for a large dataset may encounter errors or interruption, `HopBuilder.py` is designed to skip the document that has been processed by checking the `cache_dir` and continue from where it is interrupted. Here it is `quickstart_dataset/cache_hotpot_online` for demonstration. The `cache_dir` can cover the builder stage for one dataset(for example HotpotQA) but should be re-initialized for another dataset (for example MuSiQue)
-    - `original_cache_dir`: to save the nodes offline without pushing them to neo4j. It's designed to seperate building nodes offline and pushing nodes online for faster nodes creating.
-    - `docs_dir`: the doc pool directory from step1. Here it is set as `quickstart_dataset/hotpot_example_docs` for demonstration.
-- For creating nodes, there are two ways: 1. offline-online seperate mode; 2. offline-online hybrid mode. The first one is recommended.
+We provide demonstration datasets from **HotpotQA**, **2WikiMultiHop**, and **MuSiQue** to get you started quickly.
 
-    - Separate mode has two consecutive steps:
+-----
 
-        - (1) First change `llm_device` and `node_name` in `config.py` and run:
-            ```
-            main_nodes(cache_dir='quickstart_dataset/cache_hotpot_offline',docs_dir="quickstart_dataset/hotpot_example_docs",label=node_name,start_index=0,span=12000)
-            ```
+## 🚀 Getting Started
 
-        - (2) After finishing (1), push offline cache to online neo4j. This step will create new `cache_dir` (e.g. `cache_hotpot_online`) for online nodes (it is also the dir for `main_edges_index` function). Feel free to delete `original_cache_dir` after finishing online indexing.
-            ```
-            main_nodes(cache_dir='quickstart_dataset/cache_hotpot_online',docs_dir="quickstart_dataset/hotpot_example_docs",label=node_name,start_index=0,span=12000,original_cache_dir='quickstart_dataset/cache_hotpot_offline')  
-            ```
+Follow these steps to set up the HopRAG environment and prepare for your first run.
 
-    - Hybrid mode is an alternative way to create nodes and edges in one step ( remember to change `llm_device` and `node_name` in `config.py` first):
-        ```
-        main_nodes(cache_dir='quickstart_dataset/cache_hotpot_online', docs_dir="quickstart_dataset/hotpot_example_docs",label=node_name,start_index=0,span=12000,offline=False,original_cache_dir=None)
-        ```
+### Prerequisites
 
+  * Python `3.10.10` or later
+  * **Neo4j Community Edition** `5.26.0` installed and running locally.
 
-## 3. Build Edges and Index
-Run the `main_edges_index` function in the `HopBuilder.py` file.
-In `main_edges_index` funtion:
-- `cache_dir` should be the same `cache_dir` used for `main_nodes` function that contains information from online neo4j nodes (e.g. `quickstart_dataset/cache_hotpot_online`).
-- `problems_path` should be the `.jsonl` file from stage1 "Prepare the Dataset" containing the specific queries.
-- Make sure you specify the four variables `node_dense_index_name`, `edge_dense_index_name`, `node_sparse_index_name` and `edge_sparse_index_name` in `config.py` since `create_index` will be called after finishing creating edges. 
-- `create_edges_hotpot` function will create edges among nodes after finishing building nodes for the doc pool of HotpotQA and this function is tailored for the specific format of HotpotQA( and 2wiki since they basically share the same format). You may notice that there is a `create_edges_musique` function that highly resembles `create_edges_hotpot`. It is tailored for the format of MuSiQue. You can change the specific function used in `main_edges_index`. Here we demonstrate the version with `create_edges_hotpot`. But different datasets share the same `main_nodes` function. 
+### Installation and Configuration
 
-After finishing building nodes and edges, the `cache_dir` directory will contain:
-- `docid2nodes.json` is a dict that maps from the local txt file name (str) to a list of node id (list of int) in the online database.  
-- `node2questiondict.pkl` is a dict storing the mapping from the node in neo4j to its question dict. The specific format is the same as the `node2questiondict` in `create_nodes` function (Dict[Tuple[int,str],Dict[str,List[Tuple[str,Set,np.ndarray]]]]).
-- `edges_done.pkl` is a pickle file for a set that contains all the local text files' names which have finished building edges. 
+1.  **Clone the repository:**
 
-These three files can be used when incrementally updating the graph. For example when more questions or docs are added, these cache files will help `HopBuilder.py` avoid building new nodes for the same docs.
-## 4. Retrieval
-Once the graph-structure is built, you can try retrieving the context with a given query by the `search_docs` function in `HopRetriever.py`. But please note that this step is for testing the graph database and the retrieval phase, but not for generation. In step 5 the `HopGenerator.py` will use the `HopRetriever.py` to retrieve context and then generate response. For `HopRetriever.py`, there are some variables that need to be set properly according to your own need:
+    ```bash
+    # TODO: Update the repository URL once available
+    git clone https://github.com/LIU-Hao-2002/HopRAG.git
+    cd HopRAG
+    ```
 
-- the four variables `node_dense_index_name`, `edge_dense_index_name`, `node_sparse_index_name` and `edge_sparse_index_name` in `config.py`: these are the index names used to retrieve nodes and edges. By such design we can retrieve differnent contents from different index for queries from different datasets by simply changing the index names, even if the nodes from different datasets are stored in the same database in neo4j.
-- `embed_model` and `traversal_model` in `config.py`. `embed_model` should be the exact embedding model used during building the graph.
-- other hyperparameters: `max_hop`,`entry_type`,`topk`,`traversal` etc. Please refer to the corresponding function for their usage.
-We also present an example at the bottom of `HopRetriever.py`. 
+2.  **Install Python dependencies:**
 
-If you get a list of str as `context`, feel free to continue!
+    ```bash
+    pip install -r requirements.txt
+    ```
 
+3.  **Configure the Environment (`config.py`):**
+    Before running any scripts, you must update `config.py` with your local setup details.
 
-## 5. Retrieval-augmented Generation  
-Once the retrieval function is tested, run the `HopGenerator.py` file via the command line to specify the hyperparameters and start the retrieval-augmented generation process. Command-line example might be:
+      * **Neo4j Connection:** Set your database credentials.
+
+          * `neo4j_url`
+          * `neo4j_user`
+          * `neo4j_password`
+          * `neo4j_dbname`
+
+      * **LLM API:** Provide your API endpoint and key for generation.
+
+          * `personal_base`
+          * `personal_key`
+          * `default_gpt_model`
+
+      * **Embedding Model:** Specify the path to your locally downloaded embedding model. This model must be the same for both building the graph and retrieval.
+
+          * `embed_model`
+          * `embed_model_dict`
+          * `embed_dim`
+
+      * **(Optional) Local Models:** If you are using local models for generation or reranking, update their paths.
+
+          * `reranker`
+          * `query_generator_model`
+          * `traversal_model`
+
+-----
+
+## ⚙️ Usage: A Step-by-Step Guide
+
+Follow this pipeline to build the graph, run retrieval, and generate answers.
+
+### Step 1: Prepare the Dataset
+
+First, preprocess your dataset (`.json` or `.jsonl`) using `data_preprocess.py`. This script converts the data into a standardized `.jsonl` format and extracts all document passages into a directory of `.txt` files (the "doc pool").
+
+  * For **HotpotQA** or **2WikiMultiHop**, use the `main_hotpot_2wiki` function.
+  * For **MuSiQue**, use the `main_musique` function.
+
+**Note:** Ensure the sentence delimiter used in this step (e.g., `\n\n`) matches the `signal` variable in `config.py` for consistent document chunking.
+
+### Step 2: Build Graph Nodes
+
+This step chunks the documents from your doc pool and creates a node for each chunk in the Neo4j database. Run the `main_nodes` function in `HopBuilder.py`.
+
+**Key Parameters:**
+
+  * `docs_dir`: Path to the doc pool directory created in Step 1 (e.g., `quickstart_dataset/hotpot_example_docs`).
+  * `cache_dir`: A directory to log progress. This allows the script to be resumed after an interruption.
+  * `node_name`: A unique name (type) for your nodes in Neo4j (e.g., `hotpot_bgeen_qwen1b5`). Set this in `config.py`.
+
+We recommend the **separate offline-online mode** for faster and more stable node creation.
+
+#### Mode 1: Separate (Recommended)
+
+1.  **Generate nodes offline:** This step processes the documents and saves the node data locally without connecting to Neo4j.
+    ```python
+    # In HopBuilder.py
+    main_nodes(cache_dir='quickstart_dataset/cache_hotpot_offline',
+               docs_dir="quickstart_dataset/hotpot_example_docs",
+               label=node_name)
+    ```
+2.  **Push nodes to Neo4j:** This step uploads the locally cached nodes to your online database.
+    ```python
+    # In HopBuilder.py
+    main_nodes(cache_dir='quickstart_dataset/cache_hotpot_online',
+               docs_dir="quickstart_dataset/hotpot_example_docs",
+               label=node_name,
+               original_cache_dir='quickstart_dataset/cache_hotpot_offline')
+    ```
+
+#### Mode 2: Hybrid (Alternative)
+
+This mode processes and uploads nodes in a single step.
+
+```python
+# In HopBuilder.py
+main_nodes(cache_dir='quickstart_dataset/cache_hotpot_online',
+           docs_dir="quickstart_dataset/hotpot_example_docs",
+           label=node_name,
+           offline=False)
 ```
-nohup python3 HopGenerator.py --model_name 'gpt-3.5-turbo' --data_path 'quickstart_dataset/hotpot_example.jsonl' --save_dir quickstart_dataset/hotpot_output \
---retriever_name 'HopRetriever' --max_hop 4 --topk 20 --traversal bfs --mode common --label 'hotpot_bgeen_qwen1b5_' > hotpot_bgeen_qwen1b5_35.txt  &
+
+### Step 3: Build Edges and Index
+
+Next, connect the nodes with edges and create the vector and keyword indices needed for efficient retrieval. Run the `main_edges_index` function in `HopBuilder.py`.
+
+  * **Specify Index Names:** Before running, define your index names in `config.py`:
+      * `node_dense_index_name`
+      * `edge_dense_index_name`
+      * `node_sparse_index_name`
+      * `edge_sparse_index_name`
+  * **Run the script:** The `main_edges_index` function uses dataset-specific logic (e.g., `create_edges_hotpot` or `create_edges_musique`) to create edges based on the ground truth paths in your training data.
+
+After this step, your graph is fully built and indexed, ready for retrieval\!
+
+### Step 4: Test Retrieval (Optional)
+
+To verify that the graph and retrieval functions are working correctly, you can run a standalone search using the `search_docs` function in `HopRetriever.py`. This is a great way to debug or experiment with different retrieval hyperparameters (`max_hop`, `topk`, `traversal`, etc.) before running the full generation pipeline.
+
+### Step 5: Retrieval-Augmented Generation
+
+Now, run the end-to-end RAG pipeline using `HopGenerator.py` from your command line. This script retrieves relevant context from the graph and passes it to the LLM to generate the final answer.
+
+**Example Command:**
+
+```bash
+nohup python3 HopGenerator.py \
+    --model_name 'gpt-3.5-turbo' \
+    --data_path 'quickstart_dataset/hotpot_example.jsonl' \
+    --save_dir 'quickstart_dataset/hotpot_output' \
+    --retriever_name 'HopRetriever' \
+    --max_hop 4 \
+    --topk 20 \
+    --traversal 'bfs' \
+    --mode 'common' \
+    --label 'hotpot_bgeen_qwen1b5' > hotpot_run_log.txt &
 ```
-Please note that:
-- Please refer to the argument explanations at the top of `HopGenerator.py` to set the parameters.
-- Before starting, pay attn to `xxxx_index_name`, `embed_model` and `llm_device` in `config.py`. We provide `main_musique` and `main_hotpot` for MuSiQue and HotpotQA respectively.
-- After running `main_musique` or `main_hotpot`, the  `result_dir` will add one more directory with:
-    - `cache` dir filled with `.json` file, which logs the detailed answer and context contents for each question.
-    - one result file (with the retrieval context index and the generated response) in the format that can be directly evaluated by the specific evaluation tool in the corresponding benchmark.
 
-## 6. Evaluation  
-After completing Step 5, you will have the recalled contexts and generated responses for each question in the `.json`(hotpotqa)  or `.jsonl`(musique) file in `result_dir`, which is already ready for evaluation. This evaluation script depends on specific evaluation tools for the dataset, such as the HotpotQA evaluation tool (you can refer to its repository for details).
+The script will generate a results file formatted for official evaluation scripts and a `cache` directory with detailed logs for each question.
 
-Thank you for your interest in HopRAG!
+### Step 6: Evaluation
+
+The output files produced in the previous step are ready for evaluation. Use the corresponding official evaluation tools for your benchmark (e.g., the HotpotQA evaluation suite) to measure performance.
+
+-----
+
+## 📜 Citing HopRAG
+
+If you find our work useful in your research, please cite our paper:
+
+```bibtex
+@article{liu2025hoprag,
+  title={{HopRAG}: Multi-hop reasoning for logic-aware retrieval-augmented generation},
+  author={Liu, Hao and Wang, Zhengren and Chen, Xi and Li, Zhiyu and Xiong, Feiyu and Yu, Qinhan and Zhang, Wentao},
+  journal={arXiv preprint arXiv:2502.12442},
+  year={2025}
+}
+```
+
+Thank you for your interest in HopRAG\!
