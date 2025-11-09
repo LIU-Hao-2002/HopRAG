@@ -58,7 +58,7 @@ class HopRetriever:
                 return None
             for record in result:
                 startNode_dense.append((record['endNode'],record['dense_edge'],record['dense_score']))
-        self.driver.close()
+
         startNode_hybrid=[(x[0],x[2]+y[2]) for x in startNode_sparse for y in startNode_dense if x[1]['question']==y[1]['question']]
         if len(startNode_hybrid)==0:
             startNode_hybrid=startNode_dense
@@ -83,7 +83,7 @@ class HopRetriever:
                 return None
             for record in result:
                 startNode_dense.append((record['dense_node'],record['dense_score']))
-        self.driver.close()
+
         startNode_dense=sorted(startNode_dense,key=lambda x:x[1],reverse=True)
         startNode_hybrid=[(x[0],y[1]) for x in startNode_sparse for y in startNode_dense if x[0]['text']==y[0]['text']] # Hybrid is reflected in taking the intersection of dense and sparse results, but the internal score remains dense
         if len(startNode_hybrid)<self.max_hop:
@@ -101,7 +101,7 @@ class HopRetriever:
                 return None
             for record in result:
                 startNode_dense.append((record['dense_node'],record['dense_score']))
-        self.driver.close()
+
         startNode_dense=sorted(startNode_dense,key=lambda x:x[1],reverse=True)
         startNode_dense=[(node,score) for node,score in startNode_dense if node['text'] not in context] # Exclude nodes already present in the context
 
@@ -117,7 +117,7 @@ class HopRetriever:
                 return None
             for record in result:
                 startNode_dense.append((record['endNode'],record['dense_edge'],record['dense_score']))
-        self.driver.close()
+
         startNode_dense=[(node,score) for node,edge,score in startNode_dense if node['text'] not in context] # Exclude nodes already present in the context
         return startNode_dense # List[Tuple[Dict,float]]
 
@@ -129,7 +129,7 @@ class HopRetriever:
                 return None
             for record in result:
                 startNode_sparse.append((record['sparse_node'],record['sparse_score']))
-        self.driver.close()
+
         startNode_sparse=sorted(startNode_sparse,key=lambda x:x[1],reverse=True)
         startNode_sparse=[(node,score) for node,score in startNode_sparse if node['text'] not in context] # Exclude nodes already present in the context
         if len(startNode_sparse)==0:
@@ -171,7 +171,7 @@ class HopRetriever:
                     continue
                 out_questions.append(record['out_edge']['question'])
                 out_nodes.append(record['out_node'])
-        self.driver.close()
+
         if len(out_questions)==0:
             return 'Lacks appropriate follow-up questions'
 
@@ -215,7 +215,7 @@ class HopRetriever:
                     continue
                 out_nodes.append(record['out_node'])
                 out_question_embedding.append(record['out_edge']['embed'])
-        self.driver.close()
+
         if len(out_question_embedding)==0:
             return 'Lacks appropriate follow-up questions'
 
@@ -368,7 +368,7 @@ class HopRetriever:
                 if count<self.max_hop and len(queue)<5: # If there aren’t enough hops or the queue is empty, refill the queue
                     logger.info(f"{len(helpful)} helpful nodes found, {len(relevant)} relevant nodes found, {len(irrelevant)} irrelevant nodes found, {len(queue)} nodes in queue")
                     queue+=queue_irrelevant
-        self.driver.close()
+
         return outcome[:self.topk]
     
     def judge(self,node_content:str,judged_outcome:Dict[str,str],query:str)->Dict[str,str]:
@@ -424,3 +424,6 @@ if __name__ == "__main__":
                              tol=30,topk=2,traversal='bfs',mock_dense=False,reranker=None)# no reranking then reranker=None; else: reranker=reranker
     context = retriever.search_docs(query)
     print(context)
+    if retriever.driver is not None:
+        retriever.driver.close()
+        retriever.driver=None

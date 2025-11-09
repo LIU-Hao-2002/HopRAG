@@ -236,4 +236,4 @@ def sparse_similarities_df(df)->Dict[Tuple[str,str],float]:
 
 
 if __name__ == "__main__":
-    print(get_chat_completion([{"role": "user", "content": "What is the capital of China?"}]))
+    print(get_chat_completion([{"role": "user", "content": "What is the capital of China? reply in json format {\"Answer\":\"\"}"}], keys=["Answer"], model=default_gpt_model, max_tokens=4096))

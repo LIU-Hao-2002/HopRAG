@@ -82,9 +82,9 @@ def process_data_musique(source_path, docs_dir):
         json.dump(id2txt,f)
     
 
-def main_hotpot_2wiki(source_path = 'quickstart_dataset/hotpot_example.json',docs_dir = 'quickstart_dataset/hotpot_example_docs'):
+def main_hotpot_2wiki(source_path = 'quickstart_dataset/hotpot_example.jsonl',docs_dir = 'quickstart_dataset/hotpot_example_docs'):
     # for hotpotqa or 2wiki dataset, you can proprocess it like this:
-    output_path = source_path.replace('.json', '.jsonl')    
+    output_path = source_path.replace('.json', '.jsonl') if source_path.endswith('.json') else source_path
     # Call the function with the provided paths
     process_data(source_path, docs_dir, output_path)
 

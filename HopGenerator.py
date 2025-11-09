@@ -189,6 +189,9 @@ def main_musique(args):
     with open(f"{result_dir}/musique_pred_{avg_context_length}.jsonl",'w') as f:
         for res in result:
             f.write(json.dumps(res)+'\n')
+    if rag_pipeline.retriever.driver is not None:
+        rag_pipeline.retriever.driver.close()
+        rag_pipeline.retriever.driver=None
 
 def main_hotpot(args):
     rag_pipeline = RagPipeline(args)
@@ -234,6 +237,9 @@ def main_hotpot(args):
     avg_context_length=sum([len(''.join(context)) for context in contexts])/len(contexts)
     with open(f"{result_dir}/hotpot_pred_{avg_context_length}.json",'w') as f:
         json.dump(res,f)
+    if rag_pipeline.retriever.driver is not None:
+        rag_pipeline.retriever.driver.close()
+        rag_pipeline.retriever.driver=None
 
 if __name__ == "__main__":
     # before starting, pay attn to embed_model and cuda_device in config.py 

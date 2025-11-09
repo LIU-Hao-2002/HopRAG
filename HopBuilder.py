@@ -106,11 +106,11 @@ class QABuilder:
                             node2questiondict[(node_id,doc_id)]=tup[3]
                             nodes_id.append(node_id)
                     docid2nodes[doc_id]=nodes_id
-                except:
-                    logger.info(f'error:{doc_id}')
+                except Exception as e:
+                    logger.info(f'error:{doc_id}——{e}')
                     time.sleep(3)
                     continue
-        self.driver.close()
+
         return docid2nodes,node2questiondict# 
     
     def create_nodes_offline(self,docs_dir:str='/path/to/docs',start_index=0,span=100)->Tuple[Dict[str,List[int]],Dict[Tuple[int,str],Dict[str,List[Tuple[str,Set,np.ndarray]]]]]:
@@ -167,7 +167,7 @@ class QABuilder:
                     new_node2questiondict[(node_id,doc_id)]=questiondict
                     nodes_id.append(node_id)
                 new_docid2nodes[doc_id]=nodes_id
-        self.driver.close()
+
         return new_docid2nodes,new_node2questiondict 
     
     def create_edge(self,node2questiondict,docid2nodes):
@@ -236,7 +236,7 @@ class QABuilder:
         with self.driver.session() as session:
             for i,row in self.edges.iterrows():
                 session.run(create_pending2answerable,{'id1':row['node_id_x'],'id2':row['node_id_y'],'keywords':sorted(list(row['keywords_both'])),'embed':row['embedding_x'],'answerable_question':row['question_y']})# 【】
-        self.driver.close()
+
         if len(self.abstract2chunk)==0:
             return 
         with self.driver.session() as session:
@@ -245,7 +245,7 @@ class QABuilder:
                 doc_id=row['doc_id']
                 abstract_id=docid2nodes[doc_id][0]
                 session.run(create_abstract2answerable,{'abstract_id':abstract_id,'id2':row['node_id'],'keywords':temp_keywords,'embed':row['embedding'],'answerable_question':row['question']})
-        self.driver.close()
+
 
 
     def create_edges_musique(self,node2questiondict,docid2nodes,problems_path="/path/to/musique/musique_problems.jsonl"):
@@ -303,7 +303,7 @@ class QABuilder:
             index,type=edge_sparse_index_name,edge_name
             index_cypher = create_edge_sparse_index_template.format(name=index, property="keywords",type=type) # Both edges and nodes have attributes as lists during creation
             session.run(index_cypher)            
-        self.driver.close()
+
 
 def main_nodes(cache_dir='quickstart_dataset/cache_hotpot',docs_dir="quickstart_dataset/hotpot_example_docs",label="hotpot_test",start_index=0,span=50,original_cache_dir=None,offline=True):
     logger.info(f"starting indexing docs from {docs_dir}: from starting index {start_index} to ending index {start_index+span-1}")
@@ -339,6 +339,9 @@ def main_nodes(cache_dir='quickstart_dataset/cache_hotpot',docs_dir="quickstart_
     with open(f'{cache_dir}/docid2nodes.json','w') as f:
         json.dump(docid2nodes_old,f)
     del docid2nodes_old
+    if builder.driver is not None:
+        builder.driver.close()
+        builder.driver=None
     end_time=time.time()
     print('time:',end_time-start_time)
 
@@ -376,6 +379,9 @@ def main_edges_index(cache_dir='quickstart_dataset/cache_hotpot',problems_path="
     print('time:',end_time-start_time)
 
     builder.create_index()
+    if builder.driver is not None:
+        builder.driver.close()
+        builder.driver=None
 
 if __name__ == "__main__":
     # for creating nodes, there are two ways: 1. offline and online seperate; 2. offline and online hybrid. the first one recommended.
@@ -391,8 +397,8 @@ if __name__ == "__main__":
     #                start_index=0,span=12000,original_cache_dir='quickstart_dataset/cache_hotpot_offline')  
     
     # 2. hybrid mode is an alternative way to create nodes and edges in one step:
-    # main_nodes(cache_dir='quickstart_dataset/cache_hotpot_online', docs_dir="quickstart_dataset/hotpot_example_docs",label=node_name,
-    #  start_index=0,span=12000,offline=False,original_cache_dir=None)
+    main_nodes(cache_dir='quickstart_dataset/cache_hotpot_online', docs_dir="quickstart_dataset/hotpot_example_docs",label=node_name,
+     start_index=0,span=12000,offline=False,original_cache_dir=None)
 
 
     # for creating edges, it's much eaiser. first make sure creating nodes is finished and change dataset_name,node_name and edge_name in config.py
