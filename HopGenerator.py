@@ -1,0 +1,302 @@
+from tool import *
+from HopRetriever import HopRetriever
+from typing import List
+import argparse
+import json
+import os
+from tqdm import tqdm
+from loguru import logger
+import time
+parser = argparse.ArgumentParser()
+# Model related options
+parser.add_argument('--model_name', default='gpt-3.5-turbo', help="Name of the model to generate responses")
+parser.add_argument('--traversal_model', default=traversal_model, help="Name of the model to traverse the graph")
+parser.add_argument('--embedding_model', default=embed_model, help="Name of the model to generate embeddings")
+parser.add_argument('--rerank_model', default=None, help="Name of the model to rerank the retrieved passages")
+# Dataset related options
+parser.add_argument('--data_path', default='quickstart_dataset/hotpot_example.jsonl', help="Path to the queries")
+parser.add_argument('--save_dir', default='quickstart_dataset/hotpot_output', help="dir to save outcome")
+parser.add_argument('--retriever_name', default="HopRetriever", help="Name of the retriever")
+
+# arguments for HopRAG  
+parser.add_argument('--max_hop',default=5,type=int)
+parser.add_argument('--start_layer',default=0,type=int)
+parser.add_argument('--max_layer',default=2,type=int)
+parser.add_argument('--entry_type',default='node')
+parser.add_argument('--trim', action='store_true', default=False)
+parser.add_argument('--hybrid', action='store_true', default=False)
+parser.add_argument('--tol',default=20,type=int)
+parser.add_argument('--mock_dense',action='store_true',default=False)
+parser.add_argument('--mock_sparse',action='store_true',default=False)
+parser.add_argument('--mode',default='common',type=str,help='common,reformulate,rerank')
+parser.add_argument('--label',type=str,default='hotpot_example_',help='the label for the output dir, used to distinguish different runs;not for the neo4j index name to retrieve!!')
+parser.add_argument('--topk',default=8,type=int)
+parser.add_argument('--traversal',default='bfs',type=str,help='bfs_node,bfs_hop2,bfs,bfs_sim_node,dfs')
+parser.add_argument('--retrieve_only',action='store_true', default=False,help='whether to only retrieve the context')
+generate_prompt="""You are a helpful assistant. Please answer my question given the following context. If the context lacks necessary information to answer the question, please try your best to reason and answer in the right format. You have to give an answer no matter what.
+
+Please reply in a json format with only your answer. Do not repeat the context. The correct format is as follows:
+```json{{"answer": "<your answer>"}}```
+
+Example1:
+Question: What is the name of the county that Cari Roccaro is from?, 
+Context: ["East Islip is a hamlet and CDP in the Town of Islip, Suffolk County, New York, United States.","Cari Elizabeth Roccaro (born July 18, 1994) is an American soccer defender from East Islip, New York."]
+Your answer should be in the format:
+```json{{"answer": "Suffolk"}}```
+
+Now please start.Answer this question in as fewer number of words as possible!!
+Question: {query}
+Context:{context} """
+
+class RagPipeline:
+    def __init__(self, args):
+        self.args = args
+        self.retriever = self._get_retriever()
+        self.questions=None
+
+
+
+    def _get_retriever(self):
+        if self.args.retriever_name == "HopRetriever":
+            retriever = HopRetriever(llm=self.args.traversal_model,embedding_model=self.args.embedding_model,max_hop=self.args.max_hop,entry_type=self.args.entry_type,if_trim=self.args.trim,
+                                     if_hybrid=self.args.hybrid,tol=self.args.tol,mock_dense=self.args.mock_dense,mock_sparse=self.args.mock_sparse,
+                                     topk=self.args.topk,traversal=self.args.traversal,reranker=self.args.rerank_model)
+        else:
+            raise ValueError(f"Unknown retriever: {self.args.retriever_name}")
+        return retriever
+
+    def retrieve(self,query)->Tuple[List[str],List[float]]:
+        return self.retriever.search_docs(query)
+    
+    def reformulate_retrieve(self,query:str)->Tuple[List[str],List[float]]:
+        subqueries=self.retriever.query_reformulation(query)
+        final_context=[]
+        final_scores=[]
+        num_sub=len(subqueries)
+        per_topk=self.args.topk//num_sub+1
+        for subquery in subqueries:
+            context,scores=self.retrieve(subquery)
+            final_context+=context[:per_topk]
+            final_scores+=scores[:per_topk]
+        return final_context[:self.args.topk],final_scores[:self.args.topk]
+    
+    def retrieve_rerank(self,query:str)->Tuple[List[str],List[float]]:
+        return self.retriever.search_docs_rerank(query)
+    
+    
+    def rag(self,query:str,retrieve_only=False)->Tuple[str,List[str],List[float]]:
+        if self.args.mode=="reformulate":
+            context,scores=self.reformulate_retrieve(query)
+        elif self.args.mode=="rerank":
+            context,scores=self.retrieve_rerank(query)
+        else:
+            context,scores=self.retrieve(query)
+        if type(retrieve_only) is bool and retrieve_only:
+            return "I don't know because of retrieval only",context,scores
+        chat=[]
+        chat.append({"role": "user", "content": generate_prompt.format(query=query,context=context)})
+        answer, chat = get_chat_completion(chat, keys=["answer"],model=self.args.model_name)
+        return answer,context,scores # list
+    
+def get_sentenceid2idx_musique(question_path):
+    dir_=question_path.replace('.jsonl','_sentence2titid.json')
+    if os.path.exists(dir_):
+        with open(dir_,'r') as f:
+            return json.load(f)
+    else:
+        sentenceid2idx={}
+        with open(question_path,'r') as f:
+            for line in f:
+                dp=json.loads(line)
+                context=dp['paragraphs']
+                id=dp['id']
+                for dic in context:
+                    sentenceid2idx[id+'__'+dic['paragraph_text']]=dic['idx']
+        with open(dir_,'w') as f:
+            json.dump(sentenceid2idx,f)
+        return sentenceid2idx
+    
+def get_sentence2titid_hotpot(question_path):
+    dir_=question_path.replace('.jsonl','_sentence2titid.json')
+    if os.path.exists(dir_):
+        with open(dir_,'r') as f:
+            return json.load(f)
+    else:
+        sentence2titid={}
+        with open(question_path,'r') as f:
+            for line in f:
+                context=json.loads(line)['context']
+                for title,sentences in context:
+                    for i,sentence in enumerate(sentences):
+                        sentence2titid[sentence]=[title,i]
+        with open(dir_,'w') as f:
+            json.dump(sentence2titid,f)
+        return sentence2titid#for hotpot
+
+def main_musique(args):
+    rag_pipeline = RagPipeline(args)
+    questions_path=args.data_path
+    questions=[]
+    with open(questions_path,'r') as f:
+        for line in f:
+            questions.append(json.loads(line))
+    rag_pipeline.questions=questions
+    result_dir=f"{args.save_dir}/{args.label}_{args.mode}_{args.retriever_name}_{args.model_name}_traversal_{args.traversal_model.split('/')[-1]}_{args.embedding_model}"
+    id2json={}
+    if os.path.exists(result_dir):
+        cache_dir=f"{result_dir}/cache"
+        for file in os.listdir(cache_dir):
+            with open(f"{cache_dir}/{file}",'r') as f:
+                id2json[file.replace('.json','')]=json.load(f)
+        result_dir=result_dir+'_1'
+        print(f'!! load {len(id2json)} cache !!')
+    os.makedirs(result_dir,exist_ok=True)
+    result_cache_dir=f"{result_dir}/cache"
+    os.makedirs(result_cache_dir,exist_ok=True)
+    result=[]# to dump jsonl
+    sentenceid2idx=get_sentenceid2idx_musique(questions_path)
+    contexts=[]
+    for data in tqdm(questions,desc='processing questions musique'):
+        _id=data['id']
+        query=data['question']
+        if _id in id2json:
+            response=id2json[_id]['response']
+            context=id2json[_id]['context']
+            scores=id2json[_id]['scores']
+        else:
+            try:
+                response,context,scores=rag_pipeline.rag(query)
+                if context is None:
+                    logger.info(f"{_id} context is None")
+                    context=[]
+                contexts.append(context)
+            except Exception as e:
+                logger.info(f"{_id} error:{e}")
+                response='I don\'t know because of some errors'
+                context=[]
+                time.sleep(3)
+        with open(f"{result_cache_dir}/{_id.replace('/','_')}.json",'w') as f:
+            json.dump({'response':response,'context':context,'scores':scores},f)
+        # Since the scores in musique are based on index matching within the question, but the recalled sentences may come from other questions, update the index of these sentences to be above 100
+        idx=[]
+        count=0
+        for sentence in context:
+            if _id+'__'+sentence in sentenceid2idx:
+                idx.append(sentenceid2idx[_id+'__'+sentence])
+            else:
+                idx.append(100+count)
+                count+=1
+        logger.info(f"question {_id} has {count} sentences not in the original question")
+        result.append({'id':_id,'predicted_answer':response,'predicted_support_idxs':idx,'predicted_answerable':True})
+    avg_context_length=sum([len(''.join(context)) for context in contexts])/len(contexts)
+    with open(f"{result_dir}/musique_pred_{avg_context_length}.jsonl",'w') as f:
+        for res in result:
+            f.write(json.dumps(res)+'\n')
+    if rag_pipeline.retriever.driver is not None:
+        rag_pipeline.retriever.driver.close()
+        rag_pipeline.retriever.driver=None
+
+def main_hotpot(args):
+    rag_pipeline = RagPipeline(args)
+    questions_path=args.data_path
+    questions=[]
+    with open(questions_path,'r') as f:
+        for line in f:
+            questions.append(json.loads(line))
+    rag_pipeline.questions=questions
+    result_dir=f"{args.save_dir}/{args.label}_{args.mode}_{args.retriever_name}_{args.model_name}_traversal_{args.traversal_model.split('/')[-1]}_{args.embedding_model}"
+    if os.path.exists(result_dir):
+        result_dir=result_dir+'_1'
+    os.makedirs(result_dir,exist_ok=True)
+    result_cache_dir=f"{result_dir}/cache"
+    os.makedirs(result_cache_dir,exist_ok=True)
+    all_answers={}
+    sp={}
+    sentence2titid=get_sentence2titid_hotpot(questions_path)
+    contexts=[]
+    for data in tqdm(questions,desc='processing questions'):
+        _id=data['_id']
+        query=data['question']
+        try:
+            response,context,scores=rag_pipeline.rag(query,retrieve_only=_id) #
+            contexts.append(context)
+        except Exception as e:
+            logger.info(f"{_id} error:{e}")
+            response='I don\'t know because of some errors'
+            context=[]
+            scores=[]
+            time.sleep(3)
+        with open(f"{result_cache_dir}/{_id.replace('/','_')}.json",'w') as f:
+            json.dump({'response':response,'context':context,'scores':scores},f)
+        try:
+            titid=[sentence2titid[sentence] for sentence in context]
+        except Exception as e:
+            titid=[]
+            not_found_count=0
+            for sentence in context:
+                if sentence not in sentence2titid:
+                    not_found_count+=1
+                    titid.append(["not available",-1])
+                else:
+                    titid.append(sentence2titid[sentence])
+            logger.info(f"{_id} context sentence no id error:{e}; only {len(context)-not_found_count}/{len(context)} sentences have ids")
+        all_answers[_id]=response
+        sp[_id]=titid
+    res={}
+    res['answer']=all_answers
+    res['sp']=sp
+    avg_context_length=sum([len(''.join(context)) for context in contexts])/len(contexts)
+    with open(f"{result_dir}/hotpot_pred_{avg_context_length}.json",'w') as f:
+        json.dump(res,f)
+    if rag_pipeline.retriever.driver is not None:
+        rag_pipeline.retriever.driver.close()
+        rag_pipeline.retriever.driver=None
+
+if __name__ == "__main__":
+    # before starting, pay attn to embed_model and cuda_device in config.py 
+    args = parser.parse_args()
+    logger.info(f"Arguments: {args}")
+    if 'musique' in args.data_path:
+        main_musique(args)
+    else:
+        main_hotpot(args)
+
+'''
+nohup python3 HopGenerator.py --model_name 'gpt-3.5-turbo-0125' --data_path 'quickstart_dataset/musique_example.jsonl' \
+--save_dir quickstart_dataset/musique_output --retriever_name 'HopRetriever' --max_hop 4 --topk 20 --traversal bfs_hop2 \
+--mode common --label 'musique_bfs_hop2_single1cnt_38b_hop4_top20' > musique_bfs_hop2_single1cnt_38b_hop4_top20.txt  &
+'''
+
+'''
+nohup python3 HopGenerator.py --model_name 'gpt-3.5-turbo-0125' --data_path 'quickstart_dataset/hotpot_example.jsonl' \
+--save_dir quickstart_dataset/hotpot_output --retriever_name 'HopRetriever' --max_hop 4 --topk 20 --traversal bfs_hop2 \
+--mode common --label 'hotpot_bfs_hop2_single1cnt_38b_hop4_top20' > hotpot_bfs_hop2_single1cnt_38b_hop4_top20.txt  &
+'''
+
+
+'''
+nohup python3 HopGenerator.py --model_name gpt-3.5-turbo-0125 --data_path 'quickstart_dataset/wiki_example.jsonl' \
+--save_dir quickstart_dataset/wiki_output --retriever_name 'HopRetriever' --max_hop 4 --topk 20 --traversal bfs_hop2 \
+--mode common --label 'wiki_bfs_hop2_single1cnt_38b_hop4_top20' > wiki_bfs_hop2_single1cnt_38b_hop4_top20.txt &
+'''
+
+###
+
+
+'''
+nohup python3 HopGenerator.py --model_name 'gpt-3.5-turbo-0125' --data_path 'dataset/hotpot.jsonl' \
+--save_dir dataset/hotpot_output --retriever_name 'HopRetriever' --max_hop 4 --topk 20 --traversal bfs_node \
+--mode common --label 'hotpot_bfs_node_20cnt_8b_hop4_top20' > hotpot_bfs_node_20cnt_8b_hop4_top20.txt  &
+'''
+
+'''
+nohup python3 HopGenerator.py --model_name gpt-3.5-turbo-0125 --data_path 'dataset/wiki.jsonl' \
+--save_dir dataset/wiki_output --retriever_name 'HopRetriever' --max_hop 4 --topk 20 --traversal bfs_node \
+--mode common --label 'wiki_bfs_node_20cnt_8b_hop4_top20' > wiki_bfs_node_20cnt_8b_hop4_top20.txt &
+'''
+
+'''
+nohup python3 HopGenerator.py --model_name 'gpt-3.5-turbo-0125' --data_path 'dataset/musique.jsonl' \
+--save_dir dataset/musique_output --retriever_name 'HopRetriever' --max_hop 4 --topk 20 --traversal bfs_node \
+--mode common --label 'musique_bfs_node_20cnt_8b_hop4_top20' > musique_bfs_node_20cnt_8b_hop4_top20.txt  &
+'''

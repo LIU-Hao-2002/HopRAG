@@ -1,0 +1,5 @@
+dataset/
+quickstart_dataset/
+__pycache__/
+logs/
+*.txt
