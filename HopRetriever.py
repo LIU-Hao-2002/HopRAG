@@ -34,8 +34,7 @@ class HopRetriever:
     def process_query(self,query):
         # get embedding and keywords for hybrid retrieval
         query_embedding=get_doc_embeds(query, self.emb_model)
-        query_keywords = set(get_ner_eng(query))
-        query_keywords=' '.join(sorted(list(query_keywords))) # str
+        query_keywords=query # str
         return query_embedding, query_keywords
     
     def query_reformulation(self,query):
@@ -224,8 +223,9 @@ class HopRetriever:
                 if record['out_edge']['question'] in que2node:
                     continue
                 que2node[record['out_edge']['question']] = record['out_node']
-        
+        edge_cnt = 0
         for question,node in que2node.items():
+            edge_cnt += 1
             if node['text'] in hops_nodes:continue # already added to next hops
             if question not in judged_outcome:
                 chat = [] 
@@ -236,7 +236,9 @@ class HopRetriever:
             choice = judged_outcome[question]
             if choice=="helpful":
                 hops_nodes[node['text']]=node
-        print(f"current_node has {len(que2node)} edges, brings out {len(hops_nodes)} hops")
+            if edge_cnt>=8:
+                break # limit to 8 edges
+        print(f"current_node has {len(que2node)} edges, uses {edge_cnt} edges and brings out {len(hops_nodes)} hops")
         judged_outcome[current_node['text']]=list(hops_nodes.values())
         return judged_outcome,helpful_nodes
     
@@ -319,7 +321,12 @@ class HopRetriever:
                 else:
                     raise ValueError("entry_type must be 'node' or 'edge'")
             else:
-                start_node=self.dense_retrieve_node(query_embedding, {})
+                if self.entry_type=="node":
+                    start_node=self.dense_retrieve_node(query_embedding, {})
+                elif self.entry_type=="edge":
+                    start_node=self.dense_retrieve_edge(query_embedding, {})
+                else:
+                    raise ValueError("entry_type must be 'node' or 'edge'")
             return None, start_node
     
     def search_docs_dfs(self,query:str)->Tuple[List[str],List[float]]:
@@ -497,7 +504,7 @@ class HopRetriever:
         sims = np.dot(embeds,query_embedding)/(np.linalg.norm(embeds,axis=1)*np.linalg.norm(query_embedding))
         sims = sims.tolist()
         # hybrid sims
-        print(visit_counter)
+        # print(visit_counter)
         print("helpful nodes:")
         print(helpful_nodes)
         for i in range(len(sims)):
@@ -584,7 +591,7 @@ class HopRetriever:
         sims = np.dot(embeds,query_embedding)/(np.linalg.norm(embeds,axis=1)*np.linalg.norm(query_embedding))
         sims = sims.tolist()
         # hybrid sims
-        print(visit_counter)
+        # print(visit_counter)
         print("helpful nodes:\n",helpful_nodes)
         sims = [0.5*sims[i]+0.5*sparse_sims[i] for i in range(len(sims))]
         sim_dict = {outcome[i]:sims[i] for i in range(len(outcome))}
@@ -636,7 +643,7 @@ class HopRetriever:
         sorted_indices = np.argsort(scores)[::-1] # Sort in descending order
         sorted_indices = sorted_indices[:self.topk//2]
         sorted_context = [context[i] for i in sorted_indices]
-        scores = [scores[i] for i in sorted_indices]
+        scores = [float(scores[i]) for i in sorted_indices]
         return sorted_context, scores # when using reranker topk gets doubled when init, so here it should be reduced by half
                        
 if __name__ == "__main__":

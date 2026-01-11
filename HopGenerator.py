@@ -141,7 +141,7 @@ def main_musique(args):
         for line in f:
             questions.append(json.loads(line))
     rag_pipeline.questions=questions
-    result_dir=f"{args.save_dir}/{args.label}_{args.mode}_{args.retriever_name}_{args.model_name}_traversal_{args.traversal_model.split('/')[-1]}_{args.embedding_model}"
+    result_dir=f"{args.save_dir}/{args.label}_{args.retriever_name}_{args.model_name}_traversal_{args.traversal_model.split('/')[-1]}_{args.embedding_model}"
     id2json={}
     if os.path.exists(result_dir):
         cache_dir=f"{result_dir}/cache"
@@ -165,7 +165,7 @@ def main_musique(args):
             scores=id2json[_id]['scores']
         else:
             try:
-                response,context,scores=rag_pipeline.rag(query)
+                response,context,scores=rag_pipeline.rag(query,retrieve_only=_id) #
                 if context is None:
                     logger.info(f"{_id} context is None")
                     context=[]
@@ -204,7 +204,7 @@ def main_hotpot(args):
         for line in f:
             questions.append(json.loads(line))
     rag_pipeline.questions=questions
-    result_dir=f"{args.save_dir}/{args.label}_{args.mode}_{args.retriever_name}_{args.model_name}_traversal_{args.traversal_model.split('/')[-1]}_{args.embedding_model}"
+    result_dir=f"{args.save_dir}/{args.label}_{args.retriever_name}_{args.model_name}_traversal_{args.traversal_model.split('/')[-1]}_{args.embedding_model}"
     if os.path.exists(result_dir):
         result_dir=result_dir+'_1'
     os.makedirs(result_dir,exist_ok=True)

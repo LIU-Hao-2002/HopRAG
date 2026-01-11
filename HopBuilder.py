@@ -298,10 +298,10 @@ class QABuilder:
             index_cypher = create_edge_dense_index_template.format(name=index,  property="embed", dim=embed_dim,type=type)
             session.run(index_cypher)
             index,type=node_sparse_index_name,self.label 
-            index_cypher = create_node_sparse_index_template.format(name=index, property="keywords",type=type) # Both edges and nodes have attributes as lists during creation
+            index_cypher = create_node_sparse_index_template.format(name=index, property="text",type=type) # Both edges and nodes have attributes as lists during creation
             session.run(index_cypher)
             index,type=edge_sparse_index_name,edge_name
-            index_cypher = create_edge_sparse_index_template.format(name=index, property="keywords",type=type) # Both edges and nodes have attributes as lists during creation
+            index_cypher = create_edge_sparse_index_template.format(name=index, property="question",type=type) # Both edges and nodes have attributes as lists during creation
             session.run(index_cypher)            
 
 

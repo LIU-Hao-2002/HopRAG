@@ -25,7 +25,7 @@ edge_sparse_index_name=generator_label+'edge_sparse_index'
 LOG = True
 DEBUG = False
 
-local_base =  'http://localhost:8924/v1'
+local_base =  'http://localhost:your_port/v1'
 local_key = "EMPTY"
 
 gpt_base = '' # don't add /chat/completions
@@ -208,19 +208,19 @@ LIMIT 40
 """
 
 expand_logic_query="""
-MATCH (dense_node)-[r]-(logic_node)
+MATCH (dense_node:"""+node_name+""")-[r:"""+edge_name+"""]-(logic_node:"""+node_name+""")
 where dense_node.text=$text
 RETURN logic_node
 """
 
 expand_node_edge_query="""
-MATCH (dense_node)-[out_edge]->(out_node)
+MATCH (dense_node:"""+node_name+""")-[out_edge:"""+edge_name+"""]-(out_node:"""+node_name+""")
 where dense_node.text=$text
 RETURN out_node, out_edge 
 """
 
 get_out_edge_query="""
-match (n)-[r]->(m)
+match (n:"""+node_name+""")-[r:"""+edge_name+"""]->(m:"""+node_name+""")
 where n.embed=$embed
 and n.text=$text
 return r as out_edge, m as out_node
@@ -407,10 +407,10 @@ Auxiliary Question: {question}
 """
 
 shortest_path_query ="""
-MATCH (n) 
+MATCH (n:"""+node_name+""") 
 WHERE n.text=$text1
 WITH n
-MATCH (m)
+MATCH (m:"""+node_name+""")
 WHERE m.text=$text2 AND id(n) <> id(m)
 WITH n, m
 MATCH p = shortestPath((n)-[*]-(m))
