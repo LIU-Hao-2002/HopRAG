@@ -125,21 +125,6 @@ class HopRetriever:
         startNode_dense=[(node,score) for node,edge,score in startNode_dense if node['text'] not in context] # Exclude nodes already present in the context
         return startNode_dense # List[Tuple[Dict,float]]
 
-    def sparse_retreive_node(self,keywords:str,context:Dict):
-        startNode_sparse=[]
-        with self.driver.session() as session:
-            result=session.run(retrieve_node_sparse_query.format(keywords=repr(keywords),index=repr(node_sparse_index_name)))
-            if result  is None:
-                return None
-            for record in result:
-                startNode_sparse.append((record['sparse_node'],record['sparse_score']))
-
-        startNode_sparse=sorted(startNode_sparse,key=lambda x:x[1],reverse=True)
-        startNode_sparse=[(node,score) for node,score in startNode_sparse if node['text'] not in context] # Exclude nodes already present in the context
-        if len(startNode_sparse)==0:
-            return None
-        return startNode_sparse # List[Tuple[Dict,float]]
-    
     def find_entry_node(self,query_embedding, query_keywords,context:Dict):
         # During the entry node search phase, precompute the edges and node rankings for the current query to facilitate context trimming
 
@@ -325,8 +310,12 @@ class HopRetriever:
                     start_node=self.dense_retrieve_node(query_embedding, {})
                 elif self.entry_type=="edge":
                     start_node=self.dense_retrieve_edge(query_embedding, {})
+                elif self.entry_type=="sparse_node":
+                    start_node=self.hybrid_retrieve_node(query_keywords,query_embedding,{},mock_sparse=True)
+                elif self.entry_type=="sparse_edge":
+                    start_node=self.hybrid_retrieve_edge(query_keywords,query_embedding,{},mock_sparse=True)
                 else:
-                    raise ValueError("entry_type must be 'node' or 'edge'")
+                    raise ValueError("entry_type must be 'node' or 'edge' or 'sparse_node' or 'sparse_edge'")
             return None, start_node
     
     def search_docs_dfs(self,query:str)->Tuple[List[str],List[float]]:

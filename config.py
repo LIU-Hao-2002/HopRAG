@@ -5,7 +5,6 @@ embed_model_dict = {"bge_en":"/path/to/your/bge_base_en"}
 local_model_name = "local_qwen_3_8b" # modelname from locally deployed vllm server
 embed_dim = 768
 llm_device='cuda:5'
-reranker="/path/to/bge_reranker_base"
 query_generator_model=local_model_name
 traversal_model=local_model_name
 
@@ -39,7 +38,7 @@ neo4j_url = "bolt://localhost:7687"
 neo4j_user = "neo4j"
 neo4j_password = "your_password"
 neo4j_dbname = "neo4j"
-
+print("dataset_name:",dataset_name,"node:",node_name," edge:",edge_name," embed model:",embed_model,"query_generator_model:",query_generator_model,"traversal_model:",traversal_model,"local_model_name:",local_model_name)
 # 'fixed' without summary ensures questions focus on the text itself; 'pending' without summary allows questions to explore other texts.
 
 extract_template_fixed_eng="""

@@ -89,6 +89,14 @@ class RagPipeline:
             context,scores=self.reformulate_retrieve(query)
         elif self.args.mode=="rerank":
             context,scores=self.retrieve_rerank(query)
+        elif os.path.exists(self.args.mode):
+            self.args.mode+="/cache" if not self.args.mode.endswith('/cache') else ""
+            id_=retrieve_only
+            cache_file=f"{self.args.mode}/{id_.replace('/','_')}.json"
+            with open(cache_file,'r') as f:
+                dp=json.load(f)
+                context=dp['context'][:self.args.topk]
+                scores=dp['scores'][:self.args.topk]
         else:
             context,scores=self.retrieve(query)
         if type(retrieve_only) is bool and retrieve_only:
